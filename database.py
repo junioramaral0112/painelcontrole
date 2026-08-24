@@ -1,144 +1,246 @@
 """
 Camada de banco de dados do Control Tower.
 
-Usa SQLite por simplicidade (arquivo único, sem servidor separado).
-Se o volume de dados crescer muito ou for necessário acesso concorrente
-mais pesado, trocar por PostgreSQL é direto: as funções aqui isolam todo
-o SQL, então só este arquivo precisaria mudar.
+Dois backends, escolhidos pela variável DATABASE_URL:
+
+  * vazia (padrão)    -> SQLite local (arquivo único, sem servidor);
+  * preenchida        -> PostgreSQL (ex.: Supabase), ideal para ambientes
+    sem disco persistente (Streamlit Cloud), onde o SQLite local se
+    perderia a cada deploy.
+
+A troca é transparente para o resto do projeto: as funções públicas são
+as mesmas nos dois backends — só esta camada sabe qual está usando. O
+SQL é escrito com funções comuns aos dois (substr em vez de
+date()/strftime) e parâmetros nomeados; os poucos pontos em que os
+dialetos divergem de verdade (janela de "agora - N horas", upsert, DDL)
+são ramificados explicitamente em `USANDO_POSTGRES`.
+
+Todas as tabelas e índices são criados automaticamente pelo init_db() em
+qualquer backend.
 """
-import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
 
-from config import DB_PATH
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import URL
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS resumo_tarefa (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    captured_at TEXT NOT NULL,
-    region_number INTEGER NOT NULL,
-    region_name TEXT NOT NULL,
-    total INTEGER,
-    em_andamento INTEGER,
-    disponivel INTEGER,
-    concluido INTEGER,
-    nao_concluido INTEGER
-);
+from config import DATABASE_URL, DB_PATH
 
-CREATE TABLE IF NOT EXISTS resumo_trabalho (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    captured_at TEXT NOT NULL,
-    region_number INTEGER NOT NULL,
-    region_name TEXT NOT NULL,
-    operadores_trabalhando INTEGER,
-    operadores_atribuidos INTEGER,
-    itens_restantes INTEGER,
-    itens_selecionados INTEGER,
-    estimado_concluido REAL,
-    meta_regiao INTEGER
-);
+USANDO_POSTGRES = bool(DATABASE_URL)
 
-CREATE TABLE IF NOT EXISTS produtividade_regiao (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    captured_at TEXT NOT NULL,
-    region_number INTEGER NOT NULL,
-    region_name TEXT NOT NULL,
-    quantidade_total INTEGER,
-    produtividade_atual REAL,
-    numero_operadores INTEGER,
-    pct_meta REAL,
-    tempo_total TEXT,
-    meta REAL
-);
+if USANDO_POSTGRES:
+    _engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+else:
+    _engine = create_engine(URL.create("sqlite", database=DB_PATH))
 
-CREATE TABLE IF NOT EXISTS produtos_falta (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    captured_at TEXT NOT NULL,
-    region_number INTEGER NOT NULL,
-    region_name TEXT NOT NULL,
-    total_faltas INTEGER,
-    em_falta INTEGER,
-    atribuido INTEGER,
-    marcado INTEGER
-);
+# ---------------------------------------------------------------------------
+# DDL — um dialeto por backend. O SQLite usa INTEGER PRIMARY KEY
+# AUTOINCREMENT; o PostgreSQL usa BIGSERIAL. Fora isso as tabelas são
+# idênticas (captured_at fica em TEXT com formato fixo "YYYY-MM-DD
+# HH:MM:SS" nos dois, o que permite as comparações/ordenações lexicais
+# das queries abaixo).
+# ---------------------------------------------------------------------------
 
-CREATE TABLE IF NOT EXISTS produtividade_operador (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    captured_at TEXT NOT NULL,
-    region_number INTEGER NOT NULL,
-    region_name TEXT NOT NULL,
-    operador_id TEXT NOT NULL,
-    quantidade INTEGER,
-    tempo_total TEXT,
-    meta REAL,
-    produtividade_real REAL,
-    pct_meta REAL
-);
+SQLITE_DDL = [
+    """CREATE TABLE IF NOT EXISTS resumo_tarefa (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        captured_at TEXT NOT NULL,
+        region_number INTEGER NOT NULL,
+        region_name TEXT NOT NULL,
+        total INTEGER,
+        em_andamento INTEGER,
+        disponivel INTEGER,
+        concluido INTEGER,
+        nao_concluido INTEGER
+    )""",
+    """CREATE TABLE IF NOT EXISTS resumo_trabalho (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        captured_at TEXT NOT NULL,
+        region_number INTEGER NOT NULL,
+        region_name TEXT NOT NULL,
+        operadores_trabalhando INTEGER,
+        operadores_atribuidos INTEGER,
+        itens_restantes INTEGER,
+        itens_selecionados INTEGER,
+        estimado_concluido REAL,
+        meta_regiao INTEGER
+    )""",
+    """CREATE TABLE IF NOT EXISTS produtividade_regiao (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        captured_at TEXT NOT NULL,
+        region_number INTEGER NOT NULL,
+        region_name TEXT NOT NULL,
+        quantidade_total INTEGER,
+        produtividade_atual REAL,
+        numero_operadores INTEGER,
+        pct_meta REAL,
+        tempo_total TEXT,
+        meta REAL
+    )""",
+    """CREATE TABLE IF NOT EXISTS produtos_falta (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        captured_at TEXT NOT NULL,
+        region_number INTEGER NOT NULL,
+        region_name TEXT NOT NULL,
+        total_faltas INTEGER,
+        em_falta INTEGER,
+        atribuido INTEGER,
+        marcado INTEGER
+    )""",
+    """CREATE TABLE IF NOT EXISTS produtividade_operador (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        captured_at TEXT NOT NULL,
+        region_number INTEGER NOT NULL,
+        region_name TEXT NOT NULL,
+        operador_id TEXT NOT NULL,
+        quantidade INTEGER,
+        tempo_total TEXT,
+        meta REAL,
+        produtividade_real REAL,
+        pct_meta REAL
+    )""",
+    """CREATE TABLE IF NOT EXISTS coleta_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        captured_at TEXT NOT NULL,
+        sucesso INTEGER NOT NULL,
+        detalhe TEXT
+    )""",
+    # Contagem de pedidos por operador (coluna "Qtda Pedido" do painel
+    # histórico — seção 5.2 da especificação).
+    #
+    # ATENÇÃO: esta tabela é alimentada a partir do endpoint de detalhe de
+    # atribuições, que TAMBÉM devolve dados de cliente (nome, endereço,
+    # customerNumber). Nenhum desses campos pode chegar aqui: o parser usa
+    # uma allowlist e só deixa passar as 4 colunas abaixo. Não adicione
+    # colunas a esta tabela sem reler a seção 5.2 da especificação.
+    #
+    # `pedido_ref` é o id numérico interno da atribuição, não o número do
+    # pedido do cliente.
+    """CREATE TABLE IF NOT EXISTS pedidos_operador (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        captured_at TEXT NOT NULL,
+        dia TEXT NOT NULL,
+        region_number INTEGER NOT NULL,
+        region_name TEXT NOT NULL,
+        operador_id TEXT NOT NULL,
+        pedido_ref TEXT NOT NULL,
+        status TEXT,
+        UNIQUE (dia, region_number, operador_id, pedido_ref)
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_tarefa_time ON resumo_tarefa (captured_at)",
+    "CREATE INDEX IF NOT EXISTS idx_trabalho_time ON resumo_trabalho (captured_at)",
+    "CREATE INDEX IF NOT EXISTS idx_prodregiao_time ON produtividade_regiao (captured_at)",
+    "CREATE INDEX IF NOT EXISTS idx_falta_time ON produtos_falta (captured_at)",
+    "CREATE INDEX IF NOT EXISTS idx_prodoperador_time ON produtividade_operador (captured_at)",
+    "CREATE INDEX IF NOT EXISTS idx_prodoperador_regiao_dia ON produtividade_operador (region_number, captured_at)",
+    "CREATE INDEX IF NOT EXISTS idx_prodregiao_regiao_dia ON produtividade_regiao (region_number, captured_at)",
+    "CREATE INDEX IF NOT EXISTS idx_pedidos_regiao_dia ON pedidos_operador (region_number, dia)",
+]
 
-CREATE TABLE IF NOT EXISTS coleta_log (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    captured_at TEXT NOT NULL,
-    sucesso INTEGER NOT NULL,
-    detalhe TEXT
-);
-
--- Contagem de pedidos por operador (coluna "Qtda Pedido" do painel
--- histórico — seção 5.2 da especificação).
---
--- ATENÇÃO: esta tabela é alimentada a partir do endpoint de detalhe de
--- atribuições, que TAMBÉM devolve dados de cliente (nome, endereço,
--- customerNumber). Nenhum desses campos pode chegar aqui: o parser usa
--- uma allowlist e só deixa passar as 4 colunas abaixo. Não adicione
--- colunas a esta tabela sem reler a seção 5.2 da especificação.
---
--- `pedido_ref` é o id numérico interno da atribuição, não o número do
--- pedido do cliente.
-CREATE TABLE IF NOT EXISTS pedidos_operador (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    captured_at TEXT NOT NULL,
-    dia TEXT NOT NULL,
-    region_number INTEGER NOT NULL,
-    region_name TEXT NOT NULL,
-    operador_id TEXT NOT NULL,
-    pedido_ref TEXT NOT NULL,
-    status TEXT,
-    UNIQUE (dia, region_number, operador_id, pedido_ref)
-);
-
--- Índices para acelerar as consultas do dashboard (curva de evolução etc.)
-CREATE INDEX IF NOT EXISTS idx_tarefa_time ON resumo_tarefa (captured_at);
-CREATE INDEX IF NOT EXISTS idx_trabalho_time ON resumo_trabalho (captured_at);
-CREATE INDEX IF NOT EXISTS idx_prodregiao_time ON produtividade_regiao (captured_at);
-CREATE INDEX IF NOT EXISTS idx_falta_time ON produtos_falta (captured_at);
-CREATE INDEX IF NOT EXISTS idx_prodoperador_time ON produtividade_operador (captured_at);
-
--- Índices por (região, dia): o painel histórico sempre filtra por essas
--- duas dimensões juntas, então o índice composto evita varrer a tabela
--- inteira conforme o histórico cresce.
-CREATE INDEX IF NOT EXISTS idx_prodoperador_regiao_dia
-    ON produtividade_operador (region_number, captured_at);
-CREATE INDEX IF NOT EXISTS idx_prodregiao_regiao_dia
-    ON produtividade_regiao (region_number, captured_at);
-CREATE INDEX IF NOT EXISTS idx_pedidos_regiao_dia
-    ON pedidos_operador (region_number, dia);
-"""
+PG_DDL = [
+    """CREATE TABLE IF NOT EXISTS resumo_tarefa (
+        id BIGSERIAL PRIMARY KEY,
+        captured_at TEXT NOT NULL,
+        region_number INTEGER NOT NULL,
+        region_name TEXT NOT NULL,
+        total INTEGER,
+        em_andamento INTEGER,
+        disponivel INTEGER,
+        concluido INTEGER,
+        nao_concluido INTEGER
+    )""",
+    """CREATE TABLE IF NOT EXISTS resumo_trabalho (
+        id BIGSERIAL PRIMARY KEY,
+        captured_at TEXT NOT NULL,
+        region_number INTEGER NOT NULL,
+        region_name TEXT NOT NULL,
+        operadores_trabalhando INTEGER,
+        operadores_atribuidos INTEGER,
+        itens_restantes INTEGER,
+        itens_selecionados INTEGER,
+        estimado_concluido DOUBLE PRECISION,
+        meta_regiao INTEGER
+    )""",
+    """CREATE TABLE IF NOT EXISTS produtividade_regiao (
+        id BIGSERIAL PRIMARY KEY,
+        captured_at TEXT NOT NULL,
+        region_number INTEGER NOT NULL,
+        region_name TEXT NOT NULL,
+        quantidade_total INTEGER,
+        produtividade_atual DOUBLE PRECISION,
+        numero_operadores INTEGER,
+        pct_meta DOUBLE PRECISION,
+        tempo_total TEXT,
+        meta DOUBLE PRECISION
+    )""",
+    """CREATE TABLE IF NOT EXISTS produtos_falta (
+        id BIGSERIAL PRIMARY KEY,
+        captured_at TEXT NOT NULL,
+        region_number INTEGER NOT NULL,
+        region_name TEXT NOT NULL,
+        total_faltas INTEGER,
+        em_falta INTEGER,
+        atribuido INTEGER,
+        marcado INTEGER
+    )""",
+    """CREATE TABLE IF NOT EXISTS produtividade_operador (
+        id BIGSERIAL PRIMARY KEY,
+        captured_at TEXT NOT NULL,
+        region_number INTEGER NOT NULL,
+        region_name TEXT NOT NULL,
+        operador_id TEXT NOT NULL,
+        quantidade INTEGER,
+        tempo_total TEXT,
+        meta DOUBLE PRECISION,
+        produtividade_real DOUBLE PRECISION,
+        pct_meta DOUBLE PRECISION
+    )""",
+    """CREATE TABLE IF NOT EXISTS coleta_log (
+        id BIGSERIAL PRIMARY KEY,
+        captured_at TEXT NOT NULL,
+        sucesso INTEGER NOT NULL,
+        detalhe TEXT
+    )""",
+    # Mesma regra de PII do SQLite acima — reler a seção 5.2 antes de
+    # adicionar qualquer coluna aqui.
+    """CREATE TABLE IF NOT EXISTS pedidos_operador (
+        id BIGSERIAL PRIMARY KEY,
+        captured_at TEXT NOT NULL,
+        dia TEXT NOT NULL,
+        region_number INTEGER NOT NULL,
+        region_name TEXT NOT NULL,
+        operador_id TEXT NOT NULL,
+        pedido_ref TEXT NOT NULL,
+        status TEXT,
+        CONSTRAINT uq_pedidos UNIQUE (dia, region_number, operador_id, pedido_ref)
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_tarefa_time ON resumo_tarefa (captured_at)",
+    "CREATE INDEX IF NOT EXISTS idx_trabalho_time ON resumo_trabalho (captured_at)",
+    "CREATE INDEX IF NOT EXISTS idx_prodregiao_time ON produtividade_regiao (captured_at)",
+    "CREATE INDEX IF NOT EXISTS idx_falta_time ON produtos_falta (captured_at)",
+    "CREATE INDEX IF NOT EXISTS idx_prodoperador_time ON produtividade_operador (captured_at)",
+    "CREATE INDEX IF NOT EXISTS idx_prodoperador_regiao_dia ON produtividade_operador (region_number, captured_at)",
+    "CREATE INDEX IF NOT EXISTS idx_prodregiao_regiao_dia ON produtividade_regiao (region_number, captured_at)",
+    "CREATE INDEX IF NOT EXISTS idx_pedidos_regiao_dia ON pedidos_operador (region_number, dia)",
+]
 
 
 @contextmanager
 def get_connection():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    try:
+    """Uma transação: commit no fim, rollback se algo estourar."""
+    with _engine.begin() as conn:
         yield conn
-        conn.commit()
-    finally:
-        conn.close()
 
 
 def init_db():
-    """Cria as tabelas se ainda não existirem. Chamar uma vez ao iniciar."""
+    """Cria as tabelas e índices se ainda não existirem (idempotente).
+
+    Chamar uma vez ao iniciar — vale para os dois backends.
+    """
+    ddl = PG_DDL if USANDO_POSTGRES else SQLITE_DDL
     with get_connection() as conn:
-        conn.executescript(SCHEMA)
+        for comando in ddl:
+            conn.execute(text(comando))
 
 
 def _now():
@@ -147,139 +249,266 @@ def _now():
 
 def insert_resumo_tarefa(rows):
     """rows: lista de dicts vindos do parser de viewId=-1105"""
+    if not rows:
+        return
     ts = _now()
     with get_connection() as conn:
-        conn.executemany(
-            """INSERT INTO resumo_tarefa
-               (captured_at, region_number, region_name, total, em_andamento,
-                disponivel, concluido, nao_concluido)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            [(ts, r["region_number"], r["region_name"], r["total"],
-              r["em_andamento"], r["disponivel"], r["concluido"],
-              r["nao_concluido"]) for r in rows],
+        conn.execute(
+            text(
+                """INSERT INTO resumo_tarefa
+                   (captured_at, region_number, region_name, total, em_andamento,
+                    disponivel, concluido, nao_concluido)
+                   VALUES (:captured_at, :region_number, :region_name, :total,
+                           :em_andamento, :disponivel, :concluido, :nao_concluido)"""
+            ),
+            [
+                {
+                    "captured_at": ts,
+                    "region_number": r["region_number"],
+                    "region_name": r["region_name"],
+                    "total": r["total"],
+                    "em_andamento": r["em_andamento"],
+                    "disponivel": r["disponivel"],
+                    "concluido": r["concluido"],
+                    "nao_concluido": r["nao_concluido"],
+                }
+                for r in rows
+            ],
         )
 
 
 def insert_resumo_trabalho(rows):
+    if not rows:
+        return
     ts = _now()
     with get_connection() as conn:
-        conn.executemany(
-            """INSERT INTO resumo_trabalho
-               (captured_at, region_number, region_name, operadores_trabalhando,
-                operadores_atribuidos, itens_restantes, itens_selecionados,
-                estimado_concluido, meta_regiao)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            [(ts, r["region_number"], r["region_name"], r["operadores_trabalhando"],
-              r["operadores_atribuidos"], r["itens_restantes"], r["itens_selecionados"],
-              r["estimado_concluido"], r["meta_regiao"]) for r in rows],
+        conn.execute(
+            text(
+                """INSERT INTO resumo_trabalho
+                   (captured_at, region_number, region_name, operadores_trabalhando,
+                    operadores_atribuidos, itens_restantes, itens_selecionados,
+                    estimado_concluido, meta_regiao)
+                   VALUES (:captured_at, :region_number, :region_name,
+                           :operadores_trabalhando, :operadores_atribuidos,
+                           :itens_restantes, :itens_selecionados,
+                           :estimado_concluido, :meta_regiao)"""
+            ),
+            [
+                {
+                    "captured_at": ts,
+                    "region_number": r["region_number"],
+                    "region_name": r["region_name"],
+                    "operadores_trabalhando": r["operadores_trabalhando"],
+                    "operadores_atribuidos": r["operadores_atribuidos"],
+                    "itens_restantes": r["itens_restantes"],
+                    "itens_selecionados": r["itens_selecionados"],
+                    "estimado_concluido": r["estimado_concluido"],
+                    "meta_regiao": r["meta_regiao"],
+                }
+                for r in rows
+            ],
         )
 
 
 def insert_produtividade_regiao(rows):
+    if not rows:
+        return
     ts = _now()
     with get_connection() as conn:
-        conn.executemany(
-            """INSERT INTO produtividade_regiao
-               (captured_at, region_number, region_name, quantidade_total,
-                produtividade_atual, numero_operadores, pct_meta, tempo_total, meta)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            [(ts, r["region_number"], r["region_name"], r["quantidade_total"],
-              r["produtividade_atual"], r["numero_operadores"], r["pct_meta"],
-              r["tempo_total"], r["meta"]) for r in rows],
+        conn.execute(
+            text(
+                """INSERT INTO produtividade_regiao
+                   (captured_at, region_number, region_name, quantidade_total,
+                    produtividade_atual, numero_operadores, pct_meta, tempo_total, meta)
+                   VALUES (:captured_at, :region_number, :region_name,
+                           :quantidade_total, :produtividade_atual,
+                           :numero_operadores, :pct_meta, :tempo_total, :meta)"""
+            ),
+            [
+                {
+                    "captured_at": ts,
+                    "region_number": r["region_number"],
+                    "region_name": r["region_name"],
+                    "quantidade_total": r["quantidade_total"],
+                    "produtividade_atual": r["produtividade_atual"],
+                    "numero_operadores": r["numero_operadores"],
+                    "pct_meta": r["pct_meta"],
+                    "tempo_total": r["tempo_total"],
+                    "meta": r["meta"],
+                }
+                for r in rows
+            ],
         )
 
 
 def insert_produtos_falta(rows):
+    if not rows:
+        return
     ts = _now()
     with get_connection() as conn:
-        conn.executemany(
-            """INSERT INTO produtos_falta
-               (captured_at, region_number, region_name, total_faltas,
-                em_falta, atribuido, marcado)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            [(ts, r["region_number"], r["region_name"], r["total_faltas"],
-              r["em_falta"], r["atribuido"], r["marcado"]) for r in rows],
+        conn.execute(
+            text(
+                """INSERT INTO produtos_falta
+                   (captured_at, region_number, region_name, total_faltas,
+                    em_falta, atribuido, marcado)
+                   VALUES (:captured_at, :region_number, :region_name,
+                           :total_faltas, :em_falta, :atribuido, :marcado)"""
+            ),
+            [
+                {
+                    "captured_at": ts,
+                    "region_number": r["region_number"],
+                    "region_name": r["region_name"],
+                    "total_faltas": r["total_faltas"],
+                    "em_falta": r["em_falta"],
+                    "atribuido": r["atribuido"],
+                    "marcado": r["marcado"],
+                }
+                for r in rows
+            ],
         )
 
 
 def insert_produtividade_operador(rows):
     """rows: lista de dicts já FILTRADOS (quantidade > 0)"""
+    if not rows:
+        return
     ts = _now()
     with get_connection() as conn:
-        conn.executemany(
-            """INSERT INTO produtividade_operador
-               (captured_at, region_number, region_name, operador_id, quantidade,
-                tempo_total, meta, produtividade_real, pct_meta)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            [(ts, r["region_number"], r["region_name"], r["operador_id"],
-              r["quantidade"], r["tempo_total"], r["meta"],
-              r["produtividade_real"], r["pct_meta"]) for r in rows],
+        conn.execute(
+            text(
+                """INSERT INTO produtividade_operador
+                   (captured_at, region_number, region_name, operador_id, quantidade,
+                    tempo_total, meta, produtividade_real, pct_meta)
+                   VALUES (:captured_at, :region_number, :region_name, :operador_id,
+                           :quantidade, :tempo_total, :meta,
+                           :produtividade_real, :pct_meta)"""
+            ),
+            [
+                {
+                    "captured_at": ts,
+                    "region_number": r["region_number"],
+                    "region_name": r["region_name"],
+                    "operador_id": r["operador_id"],
+                    "quantidade": r["quantidade"],
+                    "tempo_total": r["tempo_total"],
+                    "meta": r["meta"],
+                    "produtividade_real": r["produtividade_real"],
+                    "pct_meta": r["pct_meta"],
+                }
+                for r in rows
+            ],
         )
 
 
 def log_coleta(sucesso: bool, detalhe: str = ""):
     with get_connection() as conn:
         conn.execute(
-            "INSERT INTO coleta_log (captured_at, sucesso, detalhe) VALUES (?, ?, ?)",
-            (_now(), 1 if sucesso else 0, detalhe),
+            text(
+                "INSERT INTO coleta_log (captured_at, sucesso, detalhe) "
+                "VALUES (:captured_at, :sucesso, :detalhe)"
+            ),
+            {"captured_at": _now(), "sucesso": 1 if sucesso else 0, "detalhe": detalhe},
         )
 
 
 def get_latest_snapshot(table: str):
-    """Retorna as linhas do timestamp mais recente de uma tabela."""
+    """Retorna as linhas do timestamp mais recente de uma tabela.
+
+    `table` é sempre um nome interno do projeto, nunca entrada externa.
+    """
     with get_connection() as conn:
         row = conn.execute(
-            f"SELECT captured_at FROM {table} ORDER BY captured_at DESC LIMIT 1"
+            text(f"SELECT captured_at FROM {table} ORDER BY captured_at DESC LIMIT 1")
         ).fetchone()
         if not row:
             return []
-        latest_ts = row["captured_at"]
+        # Acesso por _asdict(): o row["col"] do SQLAlchemy quebra com a
+        # extensão C (cyextension) em algumas plataformas.
+        latest_ts = row._asdict()["captured_at"]
         cur = conn.execute(
-            f"SELECT * FROM {table} WHERE captured_at = ? ORDER BY region_name",
-            (latest_ts,),
+            text(f"SELECT * FROM {table} WHERE captured_at = :ts ORDER BY region_name"),
+            {"ts": latest_ts},
         )
-        return [dict(r) for r in cur.fetchall()]
+        return [dict(r._mapping) for r in cur.fetchall()]
 
 
 def get_history(table: str, hours: int = 8):
-    """Retorna histórico das últimas N horas, para curva de evolução."""
+    """Retorna histórico das últimas N horas, para curva de evolução.
+
+    Aqui os dialetos divergem de verdade: o SQLite usa datetime('now')
+    e o PostgreSQL usa now() - make_interval(...).
+    """
+    horas = max(1, int(hours))
+    if USANDO_POSTGRES:
+        condicao = "captured_at >= now() - make_interval(hours => :h)"
+        parametro = {"h": horas}
+    else:
+        condicao = "captured_at >= datetime('now', :h)"
+        parametro = {"h": f"-{horas} hours"}
     with get_connection() as conn:
         cur = conn.execute(
-            f"""SELECT * FROM {table}
-                WHERE captured_at >= datetime('now', ?)
-                ORDER BY captured_at""",
-            (f"-{hours} hours",),
+            text(
+                f"SELECT * FROM {table} WHERE {condicao} ORDER BY captured_at"
+            ),
+            parametro,
         )
-        return [dict(r) for r in cur.fetchall()]
+        return [dict(r._mapping) for r in cur.fetchall()]
 
 
 def get_last_collection_status():
     with get_connection() as conn:
         row = conn.execute(
-            "SELECT * FROM coleta_log ORDER BY captured_at DESC LIMIT 1"
+            text(
+                "SELECT * FROM coleta_log ORDER BY captured_at DESC LIMIT 1"
+            )
         ).fetchone()
-        return dict(row) if row else None
+        return dict(row._mapping) if row else None
 
 
 def insert_pedidos_operador(rows):
     """rows: dicts já passados pela allowlist do parser (seção 5.2).
 
-    Usa INSERT OR REPLACE para que uma nova coleta atualize o `status` de
-    um pedido já visto no mesmo dia, sem duplicar a contagem — a chave
-    única é (dia, região, operador, pedido).
+    Upsert pela chave única (dia, região, operador, pedido): uma nova
+    coleta atualiza o `status` de um pedido já visto no mesmo dia, sem
+    duplicar a contagem. O SQLite usa INSERT OR REPLACE; o PostgreSQL,
+    ON CONFLICT.
     """
     if not rows:
         return
     ts = _now()
-    with get_connection() as conn:
-        conn.executemany(
-            """INSERT OR REPLACE INTO pedidos_operador
-               (captured_at, dia, region_number, region_name, operador_id,
-                pedido_ref, status)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            [(ts, ts[:10], r["region_number"], r["region_name"],
-              r["operador_id"], r["pedido_ref"], r["status"]) for r in rows],
+    parametros = [
+        {
+            "captured_at": ts,
+            "dia": ts[:10],
+            "region_number": r["region_number"],
+            "region_name": r["region_name"],
+            "operador_id": r["operador_id"],
+            "pedido_ref": r["pedido_ref"],
+            "status": r["status"],
+        }
+        for r in rows
+    ]
+    if USANDO_POSTGRES:
+        sql = (
+            "INSERT INTO pedidos_operador (captured_at, dia, region_number, "
+            "region_name, operador_id, pedido_ref, status) "
+            "VALUES (:captured_at, :dia, :region_number, :region_name, "
+            ":operador_id, :pedido_ref, :status) "
+            "ON CONFLICT (dia, region_number, operador_id, pedido_ref) "
+            "DO UPDATE SET captured_at = EXCLUDED.captured_at, "
+            "status = EXCLUDED.status"
         )
+    else:
+        sql = (
+            "INSERT OR REPLACE INTO pedidos_operador "
+            "(captured_at, dia, region_number, region_name, operador_id, "
+            "pedido_ref, status) "
+            "VALUES (:captured_at, :dia, :region_number, :region_name, "
+            ":operador_id, :pedido_ref, :status)"
+        )
+    with get_connection() as conn:
+        conn.execute(text(sql), parametros)
 
 
 # =========================================================================
@@ -306,11 +535,17 @@ def insert_pedidos_operador(rows):
 # Por isso as funções abaixo combinam MAX(quantidade) com um JOIN no
 # último snapshot: cada métrica é agregada do jeito que faz sentido para
 # ela, e não do mesmo jeito para todas.
+#
+# DETALHE DE PORTABILIDADE: as queries usam substr(captured_at, ...) em
+# vez de date()/strftime() de propósito — substr existe nos DOIS
+# backends (SQLite e PostgreSQL) com a mesma semântica, e o formato fixo
+# "YYYY-MM-DD HH:MM:SS" torna a comparação lexical equivalente à
+# temporal.
 
 
 def _fetch(sql: str, params: dict):
     with get_connection() as conn:
-        return [dict(r) for r in conn.execute(sql, params).fetchall()]
+        return [dict(r._mapping) for r in conn.execute(text(sql), params).fetchall()]
 
 
 def get_datas_disponiveis(region_number: int) -> list:
@@ -321,7 +556,7 @@ def get_datas_disponiveis(region_number: int) -> list:
     anteriores a isso simplesmente não aparecem na lista.
     """
     rows = _fetch(
-        """SELECT DISTINCT date(captured_at) AS dia
+        """SELECT DISTINCT substr(captured_at, 1, 10) AS dia
              FROM produtividade_regiao
             WHERE region_number = :r
             ORDER BY dia""",
@@ -354,7 +589,7 @@ def get_operadores_do_dia(region_number: int, dia: str) -> list:
                    MAX(quantidade)  AS quantidade,
                    MAX(captured_at) AS ultimo_ts
               FROM produtividade_operador
-             WHERE region_number = :r AND date(captured_at) = :d
+             WHERE region_number = :r AND substr(captured_at, 1, 10) = :d
              GROUP BY operador_id
         ) AS agg
         JOIN produtividade_operador AS ult
@@ -385,7 +620,7 @@ def get_totais_regiao_dia(region_number: int, dia: str):
         SELECT
             (SELECT MAX(quantidade_total)
                FROM produtividade_regiao
-              WHERE region_number = :r AND date(captured_at) = :d) AS quantidade,
+              WHERE region_number = :r AND substr(captured_at, 1, 10) = :d) AS quantidade,
             ult.produtividade_atual,
             ult.pct_meta,
             ult.meta,
@@ -393,7 +628,7 @@ def get_totais_regiao_dia(region_number: int, dia: str):
             ult.numero_operadores,
             ult.captured_at
         FROM produtividade_regiao AS ult
-        WHERE ult.region_number = :r AND date(ult.captured_at) = :d
+        WHERE ult.region_number = :r AND substr(ult.captured_at, 1, 10) = :d
         ORDER BY ult.captured_at DESC
         LIMIT 1
         """,
@@ -419,12 +654,12 @@ def get_serie_por_dia(region_number: int, ano_mes: str) -> list:
             ult.meta,
             ult.produtividade_atual
         FROM (
-            SELECT date(captured_at)      AS dia,
-                   MAX(quantidade_total)  AS quantidade,
-                   MAX(captured_at)       AS ultimo_ts
+            SELECT substr(captured_at, 1, 10) AS dia,
+                   MAX(quantidade_total)      AS quantidade,
+                   MAX(captured_at)           AS ultimo_ts
               FROM produtividade_regiao
              WHERE region_number = :r
-               AND strftime('%Y-%m', captured_at) = :mes
+               AND substr(captured_at, 1, 7) = :mes
              GROUP BY dia
         ) AS d
         JOIN produtividade_regiao AS ult
@@ -450,11 +685,11 @@ def get_acumulado_por_hora(region_number: int, dia: str) -> list:
     """
     return _fetch(
         """
-        SELECT CAST(strftime('%H', captured_at) AS INTEGER) AS hora,
+        SELECT CAST(substr(captured_at, 12, 2) AS INTEGER) AS hora,
                MAX(quantidade_total)                        AS acumulado,
                MAX(tempo_total)                             AS tempo_acumulado
           FROM produtividade_regiao
-         WHERE region_number = :r AND date(captured_at) = :d
+         WHERE region_number = :r AND substr(captured_at, 1, 10) = :d
          GROUP BY hora
          ORDER BY hora
         """,
@@ -572,19 +807,23 @@ def tem_dados_de_pedidos() -> bool:
     """A coleta de pedidos é opcional e desligada por padrão. O painel usa
     isto para decidir entre mostrar a coluna ou um "—" honesto."""
     with get_connection() as conn:
-        row = conn.execute("SELECT 1 FROM pedidos_operador LIMIT 1").fetchone()
+        row = conn.execute(
+            text("SELECT 1 FROM pedidos_operador LIMIT 1")
+        ).fetchone()
         return row is not None
 
 
 def get_pedidos_dia(region_number: int, dia: str) -> int:
     with get_connection() as conn:
         row = conn.execute(
-            """SELECT COUNT(DISTINCT pedido_ref) AS n
-                 FROM pedidos_operador
-                WHERE region_number = :r AND dia = :d""",
+            text(
+                """SELECT COUNT(DISTINCT pedido_ref) AS n
+                     FROM pedidos_operador
+                    WHERE region_number = :r AND dia = :d"""
+            ),
             {"r": region_number, "d": dia},
         ).fetchone()
-        return row["n"] if row else 0
+        return row._asdict()["n"] if row else 0
 
 
 def get_pedidos_mes(region_number: int, ano_mes: str) -> int:
@@ -596,11 +835,55 @@ def get_pedidos_mes(region_number: int, ano_mes: str) -> int:
     """
     with get_connection() as conn:
         row = conn.execute(
-            """SELECT COUNT(*) AS n FROM (
-                   SELECT DISTINCT dia, pedido_ref
-                     FROM pedidos_operador
-                    WHERE region_number = :r AND substr(dia, 1, 7) = :mes
-               )""",
+            text(
+                """SELECT COUNT(*) AS n FROM (
+                       SELECT DISTINCT dia, pedido_ref
+                         FROM pedidos_operador
+                        WHERE region_number = :r AND substr(dia, 1, 7) = :mes
+                   )"""
+            ),
             {"r": region_number, "mes": ano_mes},
         ).fetchone()
-        return row["n"] if row else 0
+        return row._asdict()["n"] if row else 0
+
+
+# --- Retenção de histórico ------------------------------------------------
+
+TABELAS_COM_HISTORICO = [
+    "resumo_tarefa",
+    "resumo_trabalho",
+    "produtividade_regiao",
+    "produtos_falta",
+    "produtividade_operador",
+    "pedidos_operador",
+    "coleta_log",
+]
+
+
+def limpar_historico_antigo(dias: int = 60) -> dict:
+    """Apaga snapshots com mais de `dias` dias em todas as tabelas.
+
+    Devolve {tabela: linhas_apagadas}. Idempotente e segura para rodar a
+    qualquer momento — o coletor chama 1x por dia, e o banco continua
+    consistente entre uma limpeza e outra.
+
+    Nota: `now()` (SQLite e PostgreSQL) é UTC e captured_at é hora
+    local — a diferença de horas é irrelevante numa janela de 60 dias.
+    """
+    dias = max(1, int(dias))
+    if USANDO_POSTGRES:
+        corte = "(now() - make_interval(days => :d))"
+        parametro = {"d": dias}
+    else:
+        corte = "datetime('now', :d)"
+        parametro = {"d": f"-{dias} days"}
+
+    apagados = {}
+    with get_connection() as conn:
+        for tabela in TABELAS_COM_HISTORICO:
+            resultado = conn.execute(
+                text(f"DELETE FROM {tabela} WHERE captured_at < {corte}"),
+                parametro,
+            )
+            apagados[tabela] = resultado.rowcount or 0
+    return apagados

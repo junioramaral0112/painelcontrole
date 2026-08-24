@@ -25,6 +25,9 @@ if not os.path.exists(DB_DEMO):
     raise SystemExit(1)
 
 os.environ["DB_PATH"] = DB_DEMO
+# Mesmo cuidado do test_offline: os testes de UI rodam contra o SQLite
+# demo, nunca contra um DATABASE_URL de produção.
+os.environ.pop("DATABASE_URL", None)
 sys.path.insert(0, RAIZ)
 
 from streamlit.testing.v1 import AppTest  # noqa: E402

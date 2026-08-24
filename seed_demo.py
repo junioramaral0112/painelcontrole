@@ -57,6 +57,13 @@ def operadores_da_regiao(region_number: int, dia: date) -> list:
 
 
 def gerar():
+    if config.DATABASE_URL:
+        print(
+            "DATABASE_URL está definida — o banco ativo é o PostgreSQL de "
+            "produção. Este script NUNCA escreve dados de demonstração lá: "
+            "desative a variável para gerar o demo local."
+        )
+        raise SystemExit(1)
     if os.path.exists(DB_DEMO):
         os.remove(DB_DEMO)
     db.init_db()
@@ -171,45 +178,74 @@ def _gravar_snapshot(ts: str, escala: dict, acumulado: dict, horas: dict, hora: 
 def _inserir_com_timestamp(ts, tarefa, trabalho, regiao, falta, operador):
     """Insere direto, para poder controlar o captured_at (as funções do
     database.py sempre carimbam a hora atual, que é o certo em produção
-    mas não serve para gerar histórico)."""
+    mas não serve para gerar histórico).
+
+    Parâmetros nomeados por causa do SQLAlchemy 2.x, que não aceita
+    parâmetros posicionais — os dicts do gerador já têm as chaves com os
+    nomes exatos das colunas.
+    """
+    from sqlalchemy import text
+
     with db.get_connection() as conn:
-        conn.executemany(
-            """INSERT INTO resumo_tarefa (captured_at, region_number, region_name,
-               total, em_andamento, disponivel, concluido, nao_concluido)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            [(ts, r["region_number"], r["region_name"], r["total"], r["em_andamento"],
-              r["disponivel"], r["concluido"], r["nao_concluido"]) for r in tarefa])
-        conn.executemany(
-            """INSERT INTO resumo_trabalho (captured_at, region_number, region_name,
-               operadores_trabalhando, operadores_atribuidos, itens_restantes,
-               itens_selecionados, estimado_concluido, meta_regiao)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            [(ts, r["region_number"], r["region_name"], r["operadores_trabalhando"],
-              r["operadores_atribuidos"], r["itens_restantes"], r["itens_selecionados"],
-              r["estimado_concluido"], r["meta_regiao"]) for r in trabalho])
-        conn.executemany(
-            """INSERT INTO produtividade_regiao (captured_at, region_number, region_name,
-               quantidade_total, produtividade_atual, numero_operadores, pct_meta,
-               tempo_total, meta) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            [(ts, r["region_number"], r["region_name"], r["quantidade_total"],
-              r["produtividade_atual"], r["numero_operadores"], r["pct_meta"],
-              r["tempo_total"], r["meta"]) for r in regiao])
-        conn.executemany(
-            """INSERT INTO produtos_falta (captured_at, region_number, region_name,
-               total_faltas, em_falta, atribuido, marcado)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            [(ts, r["region_number"], r["region_name"], r["total_faltas"],
-              r["em_falta"], r["atribuido"], r["marcado"]) for r in falta])
-        conn.executemany(
-            """INSERT INTO produtividade_operador (captured_at, region_number,
-               region_name, operador_id, quantidade, tempo_total, meta,
-               produtividade_real, pct_meta) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            [(ts, r["region_number"], r["region_name"], r["operador_id"],
-              r["quantidade"], r["tempo_total"], r["meta"], r["produtividade_real"],
-              r["pct_meta"]) for r in operador])
         conn.execute(
-            "INSERT INTO coleta_log (captured_at, sucesso, detalhe) VALUES (?, 1, ?)",
-            (ts, "dados de demonstração"))
+            text(
+                """INSERT INTO resumo_tarefa (captured_at, region_number, region_name,
+                   total, em_andamento, disponivel, concluido, nao_concluido)
+                   VALUES (:captured_at, :region_number, :region_name, :total,
+                           :em_andamento, :disponivel, :concluido, :nao_concluido)"""
+            ),
+            [dict(r, captured_at=ts) for r in tarefa],
+        )
+        conn.execute(
+            text(
+                """INSERT INTO resumo_trabalho (captured_at, region_number, region_name,
+                   operadores_trabalhando, operadores_atribuidos, itens_restantes,
+                   itens_selecionados, estimado_concluido, meta_regiao)
+                   VALUES (:captured_at, :region_number, :region_name,
+                           :operadores_trabalhando, :operadores_atribuidos,
+                           :itens_restantes, :itens_selecionados,
+                           :estimado_concluido, :meta_regiao)"""
+            ),
+            [dict(r, captured_at=ts) for r in trabalho],
+        )
+        conn.execute(
+            text(
+                """INSERT INTO produtividade_regiao (captured_at, region_number,
+                   region_name, quantidade_total, produtividade_atual,
+                   numero_operadores, pct_meta, tempo_total, meta)
+                   VALUES (:captured_at, :region_number, :region_name,
+                           :quantidade_total, :produtividade_atual,
+                           :numero_operadores, :pct_meta, :tempo_total, :meta)"""
+            ),
+            [dict(r, captured_at=ts) for r in regiao],
+        )
+        conn.execute(
+            text(
+                """INSERT INTO produtos_falta (captured_at, region_number, region_name,
+                   total_faltas, em_falta, atribuido, marcado)
+                   VALUES (:captured_at, :region_number, :region_name,
+                           :total_faltas, :em_falta, :atribuido, :marcado)"""
+            ),
+            [dict(r, captured_at=ts) for r in falta],
+        )
+        conn.execute(
+            text(
+                """INSERT INTO produtividade_operador (captured_at, region_number,
+                   region_name, operador_id, quantidade, tempo_total, meta,
+                   produtividade_real, pct_meta)
+                   VALUES (:captured_at, :region_number, :region_name, :operador_id,
+                           :quantidade, :tempo_total, :meta,
+                           :produtividade_real, :pct_meta)"""
+            ),
+            [dict(r, captured_at=ts) for r in operador],
+        )
+        conn.execute(
+            text(
+                "INSERT INTO coleta_log (captured_at, sucesso, detalhe) "
+                "VALUES (:captured_at, 1, :detalhe)"
+            ),
+            {"captured_at": ts, "detalhe": "dados de demonstração"},
+        )
 
 
 def _hhmmss(horas: float) -> str:

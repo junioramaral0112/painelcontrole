@@ -63,6 +63,13 @@ def _limpar():
 
 
 def gerar():
+    if config.DATABASE_URL:
+        print(
+            "DATABASE_URL está definida — o banco ativo é o PostgreSQL de "
+            "produção. Este script NUNCA escreve dados de demonstração lá: "
+            "desative a variável para usar o SQLite local."
+        )
+        raise SystemExit(1)
     if _tem_dados():
         if "--force" not in sys.argv:
             print(

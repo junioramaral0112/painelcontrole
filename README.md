@@ -41,6 +41,31 @@ pip install -r requirements.txt
    uma conta de serviço do VoiceLink (recomendado: peça à TI uma conta
    dedicada, em vez de usar seu login pessoal).
 
+## Banco de dados: SQLite local ou PostgreSQL (Supabase)
+
+Por padrão o projeto usa SQLite local (`control_tower.db`), sem servidor
+nenhum. Para ambientes sem disco persistente (ex.: Streamlit Cloud), ou
+quando coletor e painel rodam em máquinas diferentes, defina
+`DATABASE_URL` no `.env` (ou nos Secrets do Streamlit Cloud) com uma
+conexão PostgreSQL, ex.:
+
+    DATABASE_URL=postgresql+psycopg2://usuario:senha@host:5432/postgres
+
+As tabelas e índices são criados automaticamente na inicialização, em
+qualquer backend. O SQL das queries é escrito para funcionar nos dois
+(parâmetros nomeados, `substr` em vez de `date()`/`strftime`); os pontos
+em que os dialetos divergem (DDL, upsert, janela das "últimas 8h") são
+ramificados dentro do `database.py`.
+
+Retenção: o coletor apaga snapshots com mais de `RETENCAO_DIAS` dias
+(padrão 60) — uma vez na subida e depois no máximo 1x por dia, via
+`limpar_historico_antigo()`.
+
+No Streamlit Cloud o coletor NÃO roda (a plataforma só executa o app
+quando alguém acessa): deixe o coletor rodando numa máquina da empresa
+apontando para o MESMO `DATABASE_URL`, e o app da nuvem lê o mesmo
+banco.
+
 ## Rodando
 
 Abra **dois terminais**:

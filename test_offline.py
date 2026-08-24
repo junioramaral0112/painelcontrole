@@ -20,8 +20,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # só funcionava fora do Windows, que é justamente onde o painel roda).
 DB_TESTE = os.path.join(tempfile.gettempdir(), "test_control_tower.db")
 os.environ["DB_PATH"] = DB_TESTE
+# O teste roda SEMPRE no SQLite local, mesmo que o ambiente tenha
+# DATABASE_URL definida (nada de apontar os testes para o Postgres).
+os.environ.pop("DATABASE_URL", None)
 
 import database as db
+from sqlalchemy import text as _text
 from collector import (
     parse_resumo_tarefa, parse_resumo_trabalho,
     parse_produtividade_regiao, parse_produtos_falta,
@@ -199,24 +203,36 @@ REGIAO_TESTE = 99  # região fictícia, para não colidir com os dados acima
 def _snapshot_regiao(ts, quantidade, taxa, tempo, meta=1350):
     with db.get_connection() as conn:
         conn.execute(
-            """INSERT INTO produtividade_regiao
+            _text(
+                """INSERT INTO produtividade_regiao
                (captured_at, region_number, region_name, quantidade_total,
                 produtividade_atual, numero_operadores, pct_meta, tempo_total, meta)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (ts, REGIAO_TESTE, "Reg Teste", quantidade, taxa, 2,
-             taxa / meta * 100, tempo, meta),
+               VALUES (:captured_at, :region_number, :region_name, :quantidade_total,
+                       :produtividade_atual, :numero_operadores, :pct_meta,
+                       :tempo_total, :meta)"""
+            ),
+            {"captured_at": ts, "region_number": REGIAO_TESTE,
+             "region_name": "Reg Teste", "quantidade_total": quantidade,
+             "produtividade_atual": taxa, "numero_operadores": 2,
+             "pct_meta": taxa / meta * 100, "tempo_total": tempo, "meta": meta},
         )
 
 
 def _snapshot_operador(ts, operador, quantidade, taxa, tempo, meta=1350):
     with db.get_connection() as conn:
         conn.execute(
-            """INSERT INTO produtividade_operador
+            _text(
+                """INSERT INTO produtividade_operador
                (captured_at, region_number, region_name, operador_id, quantidade,
                 tempo_total, meta, produtividade_real, pct_meta)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (ts, REGIAO_TESTE, "Reg Teste", operador, quantidade, tempo, meta,
-             taxa, taxa / meta * 100),
+               VALUES (:captured_at, :region_number, :region_name, :operador_id,
+                       :quantidade, :tempo_total, :meta, :produtividade_real,
+                       :pct_meta)"""
+            ),
+            {"captured_at": ts, "region_number": REGIAO_TESTE,
+             "region_name": "Reg Teste", "operador_id": operador,
+             "quantidade": quantidade, "tempo_total": tempo, "meta": meta,
+             "produtividade_real": taxa, "pct_meta": taxa / meta * 100},
         )
 
 
@@ -395,6 +411,32 @@ assert ui.logo_data_uri().startswith("data:image/png"), (
 _config.LOGO_PATH = _caminho_real
 ui.logo_data_uri.cache_clear()
 print("OK: logo ausente ou corrompida não derruba a tela")
+
+
+# =========================================================================
+# Retenção de histórico (limpar_historico_antigo)
+# =========================================================================
+print("\n== Testando limpar_historico_antigo (retenção) ==")
+
+from datetime import datetime as _dt              # noqa: E402
+
+_ts_antigo = "2020-01-01 10:00:00"
+_ts_novo = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
+_snapshot_regiao(_ts_antigo, 100, 100.0, "01:00:00")
+_snapshot_regiao(_ts_novo, 200, 200.0, "01:00:00")
+
+_apagados = db.limpar_historico_antigo(dias=60)
+assert _apagados.get("produtividade_regiao", 0) == 1, (
+    f"Apenas o snapshot de 2020 deveria sair; veio {_apagados}"
+)
+with db.get_connection() as _conn:
+    _sobras = _conn.execute(
+        _text("SELECT captured_at FROM produtividade_regiao ORDER BY captured_at")
+    ).fetchall()
+_ts_sobras = [r._asdict()["captured_at"] for r in _sobras]
+assert _ts_antigo not in _ts_sobras, "O snapshot antigo tinha que ter sido apagado"
+assert _ts_novo in _ts_sobras, "O snapshot recente não pode ser apagado"
+print("OK: limpar_historico_antigo apaga só o que tem mais de 60 dias")
 
 
 # =========================================================================

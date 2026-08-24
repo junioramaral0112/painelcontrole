@@ -375,6 +375,19 @@ def main():
 
     once = "--once" in sys.argv
 
+    # Retenção de histórico (config.RETENCAO_DIAS dias): limpa uma vez na
+    # subida e depois no máximo 1x por dia — apagar a cada ciclo de 60s
+    # seria desperdício de banco.
+    try:
+        apagados = db.limpar_historico_antigo(dias=config.RETENCAO_DIAS)
+        log.info(
+            "Limpeza de histórico (>%d dias): %d linhas apagadas (%s)",
+            config.RETENCAO_DIAS, sum(apagados.values()), apagados,
+        )
+    except Exception as exc:  # noqa: BLE001 - limpeza não pode derrubar o coletor
+        log.error("Falha na limpeza inicial do histórico: %s", exc)
+    ultima_limpeza = time.monotonic()
+
     if config.COLLECT_ORDER_COUNTS:
         log.info(
             "Coleta de pedidos LIGADA (a cada %ds). Só a contagem por "
@@ -394,6 +407,17 @@ def main():
             db.log_coleta(sucesso=False, detalhe=str(exc))
             # Se a sessão expirou, força novo login na próxima tentativa
             vl._logged_in = False
+
+        # Retenção de histórico: no máximo 1x por dia (a primeira já
+        # rodou na subida). Em try separado de propósito — falha de
+        # limpeza não pode interromper a coleta.
+        if time.monotonic() - ultima_limpeza >= 24 * 60 * 60:
+            try:
+                db.limpar_historico_antigo(dias=config.RETENCAO_DIAS)
+                ultima_limpeza = time.monotonic()
+                log.info("Limpeza diária do histórico concluída.")
+            except Exception as exc:  # noqa: BLE001
+                log.error("Falha na limpeza diária do histórico: %s", exc)
 
         # A coleta de pedidos tem o seu próprio relógio, bem mais lento.
         # Fica num try separado de propósito: se ela falhar, o ciclo

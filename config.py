@@ -76,3 +76,15 @@ LOGO_PATH = os.getenv("LOGO_PATH", os.path.join(os.path.dirname(__file__), "logo
 
 # --- Banco de dados ------------------------------------------------------
 DB_PATH = os.getenv("DB_PATH", os.path.join(os.path.dirname(__file__), "control_tower.db"))
+
+# DATABASE_URL vazia (padrão) => SQLite local (DB_PATH acima). Preenchida
+# => PostgreSQL (ex.: Supabase) — as tabelas e índices são criados
+# automaticamente na inicialização. É o caminho para ambientes sem disco
+# persistente (Streamlit Cloud), onde o SQLite local se perderia a cada
+# deploy. Exemplo:
+#   postgresql+psycopg2://usuario:senha@host:5432/postgres
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+
+# Retenção de histórico (dias): o coletor apaga snapshots mais velhos que
+# isto uma vez por dia (limpar_historico_antigo).
+RETENCAO_DIAS = int(os.getenv("RETENCAO_DIAS", "60"))
