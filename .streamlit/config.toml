@@ -1,0 +1,17 @@
+# Tema do Streamlit.
+#
+# Este arquivo cuida do que é do próprio Streamlit — barra lateral,
+# tabelas, sliders, botões. O CSS do ui.py cuida do que é nosso (cards,
+# cabeçalho, gráficos). Os dois precisam combinar: sem isto, quem abrisse
+# o painel com o Streamlit em modo escuro veria a página clara com a
+# barra lateral e as tabelas escuras.
+#
+# As cores são as da paleta clara de referência, as mesmas constantes que
+# estão no ui.py — se mudar aqui, mude lá também.
+
+[theme]
+base = "light"
+backgroundColor = "#f9f9f7"          # plano da página
+secondaryBackgroundColor = "#f0efec" # barra lateral e cabeçalho de tabela
+textColor = "#0b0b0b"                # tinta primária
+primaryColor = "#2a78d6"             # azul da série 1 (destaque de widget)

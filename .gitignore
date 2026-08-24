@@ -1,0 +1,15 @@
+# Credenciais — NUNCA commitar
+.env
+
+# Bancos de dados (o de produção cresce sozinho, o de demo é gerado)
+*.db
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Logs e caches locais
+*.log
+.pytest_cache/
