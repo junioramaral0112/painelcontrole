@@ -1,5 +1,6 @@
 # Credenciais — NUNCA commitar
 .env
+coletor.config.ps1
 
 # Bancos de dados (o de produção cresce sozinho, o de demo é gerado)
 *.db

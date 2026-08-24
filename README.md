@@ -41,6 +41,36 @@ pip install -r requirements.txt
    uma conta de serviço do VoiceLink (recomendado: peça à TI uma conta
    dedicada, em vez de usar seu login pessoal).
 
+## Coletor em PowerShell (PC corporativo sem Python)
+
+Para o PC corporativo bloqueado (sem Python, sem admin, sem executáveis
+desconhecidos), existe o `coletor.ps1` — coletor nativo em PowerShell
+que faz a MESMA coleta do `collector.py` (login no VoiceLink, os 5
+endpoints, parsers idênticos campo a campo, inclusive a allowlist de PII
+da seção 5.2) e grava direto na API REST do Supabase.
+
+Configuração: crie um arquivo `coletor.config.ps1` na mesma pasta (está
+no `.gitignore` — **nunca** commitar; o repositório é público):
+
+```powershell
+$VOICELINK_USER     = "usuario_de_servico"
+$VOICELINK_PASSWORD = "senha"
+$SUPABASE_KEY       = "chave-do-supabase-com-permissao-de-INSERT"
+```
+
+Também vale variável de ambiente (`CT_VOICELINK_USER`,
+`CT_VOICELINK_PASSWORD`, `CT_SUPABASE_KEY`). Para rodar (sem admin):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File coletor.ps1
+```
+
+Requisitos: as tabelas precisam existir no Supabase com as mesmas
+colunas do `init_db()` (rode uma vez o `collector.py` com `DATABASE_URL`
+apontando para o projeto), e a chave precisa poder inserir nelas. Rode
+OU o `coletor.ps1` OU o `collector.py` contra o mesmo banco — nunca os
+dois ao mesmo tempo, senão os snapshots duplicam.
+
 ## Banco de dados: SQLite local ou PostgreSQL (Supabase)
 
 Por padrão o projeto usa SQLite local (`control_tower.db`), sem servidor
