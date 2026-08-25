@@ -32,10 +32,6 @@ MESES = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho",
 
 ui.configurar_pagina("Histórico por Região — Control Tower", "📊")
 
-# Portão de login, igual ao da tela de Tempo Real: páginas multi-page
-# rodam scripts separados, então cada uma exige a sua validação.
-ui.exigir_login()
-
 presentation.tick("historico", config.DASHBOARD_REFRESH_SECONDS * 1000)
 
 modo_tv = presentation.ativo()

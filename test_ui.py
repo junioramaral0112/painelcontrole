@@ -36,15 +36,8 @@ TEMPO_LIMITE = 60
 
 
 def executar(caminho: str, estado: dict = None) -> AppTest:
-    """Renderiza uma tela já autenticada.
-
-    O portão de login bloqueia as telas sem `ct_autenticado` no
-    session_state; como estes testes cobrem o CONTEÚDO das telas, o
-    estado de autenticado entra por padrão. O portão em si tem o seu
-    próprio teste no fim do arquivo.
-    """
+    """Renderiza uma tela sem estado de sessão nenhum (acesso aberto)."""
     app = AppTest.from_file(caminho, default_timeout=TEMPO_LIMITE)
-    app.session_state["ct_autenticado"] = True
     for chave, valor in (estado or {}).items():
         app.session_state[chave] = valor
     app.run()
@@ -93,26 +86,22 @@ vazio = executar("pages/1_Historico.py", {"ct_regiao_alvo": 6,
 assert not vazio.error
 print("OK: região sem dados tratada sem exceção")
 
-print("\n== Tela de login (sem autenticação) ==")
-# O portão precisa segurar as DUAS páginas: páginas multi-page rodam
-# scripts separados, e quem acertar a URL direto não pode ver dados.
-portao = AppTest.from_file("app.py", default_timeout=TEMPO_LIMITE)
-portao.run()
-assert not portao.exception, portao.exception
-assert len(portao.text_input) == 2, (
-    f"Esperava os campos Usuário e Senha, vieram {len(portao.text_input)}"
+print("\n== Acesso aberto (sem tela de login) ==")
+# O painel renderiza direto: quem abrir a URL vê os dados, sem nenhuma
+# checagem de sessão. As DUAS páginas têm que mostrar conteúdo com o
+# session_state completamente vazio.
+aberto = AppTest.from_file("app.py", default_timeout=TEMPO_LIMITE)
+aberto.run()
+assert not aberto.exception, aberto.exception
+assert len(aberto.dataframe) > 0, (
+    "Sem nenhum estado de sessão, os dados devem aparecer direto"
 )
-from streamlit.proto.TextInput_pb2 import TextInput  # noqa: E402
-assert portao.text_input[1].proto.type == TextInput.Type.PASSWORD, (
-    "A senha precisa ser mascarada (type=password)"
-)
-assert len(portao.dataframe) == 0, "Nenhum dado pode aparecer antes do login"
-print("OK: app.py bloqueado — formulário Usuário/Senha (senha mascarada), sem dados")
+print(f"OK: app.py renderiza aberto — {len(aberto.dataframe)} tabelas sem login")
 
-portao_h = AppTest.from_file("pages/1_Historico.py", default_timeout=TEMPO_LIMITE)
-portao_h.run()
-assert not portao_h.exception, portao_h.exception
-assert len(portao_h.dataframe) == 0, "O Histórico também precisa bloquear sem login"
-print("OK: pages/1_Historico.py bloqueado sem login")
+aberto_h = AppTest.from_file("pages/1_Historico.py", default_timeout=TEMPO_LIMITE)
+aberto_h.run()
+assert not aberto_h.exception, aberto_h.exception
+assert len(aberto_h.dataframe) > 0, "O Histórico também deve abrir direto"
+print("OK: pages/1_Historico.py renderiza aberto sem login")
 
 print("\n✅ Todas as telas renderizaram sem exceção.")

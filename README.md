@@ -126,22 +126,13 @@ módulo, e o painel passa a misturar código novo com velho.
 4 regiões: itens selecionados/restantes, produtividade por região,
 operadores em produção, produtos em falta e a curva das últimas 8h.
 
-### Login do painel
+### Acesso ao painel
 
-Cada sessão de navegador começa na tela de login (Usuário/Senha,
-mascarada). A credencial digitada é validada com a MESMA chamada de
-login que o coletor usa (módulo compartilhado `auth.py`), direto contra
-o VoiceLink — a fonte de verdade é o VoiceLink, não existe lista de
-usuários local para manter. Regras:
-
-- a autenticação vale só para a sessão do navegador (session_state):
-  fechou o navegador ou abriu a página do zero, loga de novo;
-- a senha digitada existe só durante a chamada de validação — não é
-  gravada em banco, arquivo ou log;
-- o coletor NÃO é afetado: segue rodando em background com a credencial
-  de serviço do `.env`, independente de quem está logado no dashboard;
-- sem acesso ao VoiceLink ninguém loga — o painel só abre na rede da
-  empresa (ou VPN).
+O painel abre **direto**, sem tela de login: quem tiver acesso à URL (na
+rede interna ou via VPN) vê as métricas. O controle de acesso fica por
+conta da rede — por isso é importante NÃO expor o Streamlit à internet
+(a seção de segurança tem os porquês). O `auth.py` continua no projeto:
+é a autenticação que o coletor usa contra o VoiceLink.
 
 **Histórico por Região** (`pages/1_Historico.py`) — um painel por região,
 no estilo dos painéis de produtividade já usados na fábrica:
@@ -278,7 +269,7 @@ COLLECT_ORDER_COUNTS=true
 | Arquivo | Responsabilidade |
 |---|---|
 | `config.py` | URLs, credenciais (via `.env`), regiões, intervalos |
-| `auth.py` | Login contra o VoiceLink, compartilhado pelo coletor e pela tela de login do dashboard |
+| `auth.py` | Login contra o VoiceLink, usado pelo coletor |
 | `database.py` | Schema SQLite e todas as queries (única camada que fala SQL) |
 | `collector.py` | Login + as 5 chamadas ao VoiceLink + parsers + gravação |
 | `app.py` | Tela de Tempo Real (Streamlit) — só lê do banco |

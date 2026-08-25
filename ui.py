@@ -28,7 +28,6 @@ from functools import lru_cache
 import plotly.graph_objects as go
 import streamlit as st
 
-import auth
 import config
 import database as db
 
@@ -174,61 +173,6 @@ def configurar_pagina(titulo: str, icone: str = "📡"):
     # qualquer consulta.
     db.init_db()
     st.markdown(CSS, unsafe_allow_html=True)
-
-
-CHAVE_AUTENTICADO = "ct_autenticado"
-
-
-def exigir_login() -> None:
-    """Portão de login: bloqueia a página até validar contra o VoiceLink.
-
-    Chamar no topo de CADA página (as páginas multi-page do Streamlit
-    rodam scripts separados, então cada uma precisa do seu portão).
-
-    Regras:
-
-      * a fonte de verdade é o VoiceLink — a credencial digitada é
-        validada com a MESMA chamada de login que o coletor usa
-        (auth.login_voicelink); não existe lista de usuários local;
-      * a senha existe só durante a chamada de validação — não vai para
-        banco, arquivo, log nem session_state; a variável morre no fim
-        desta função;
-      * a autenticação vive em session_state: morre junto com a aba/
-        navegador — cada pessoa que abrir o painel loga de novo;
-      * não interfere no coletor: ele segue com a credencial de serviço
-        do .env, independente de quem está (ou não) logado no dashboard.
-    """
-    if st.session_state.get(CHAVE_AUTENTICADO):
-        return
-
-    st.markdown(
-        '<p class="ct-title">CONTROL TOWER — OPERAÇÕES DE SELEÇÃO</p>',
-        unsafe_allow_html=True,
-    )
-    st.caption("Entre com a sua conta do VoiceLink para ver o painel.")
-
-    with st.form("ct_login"):
-        usuario = st.text_input("Usuário")
-        senha = st.text_input("Senha", type="password")
-        enviar = st.form_submit_button("Entrar")
-
-    if enviar:
-        if not usuario or not senha:
-            st.error("Preencha usuário e senha.")
-        else:
-            with st.spinner("Validando no VoiceLink…"):
-                sessao = auth.login_voicelink(usuario, senha)
-            if sessao is not None:
-                sessao.close()  # o dashboard só precisa da validação
-                st.session_state[CHAVE_AUTENTICADO] = True
-                st.rerun()
-            else:
-                st.error(
-                    "Login inválido. Verifique usuário e senha "
-                    "(ou se a rede do VoiceLink está acessível)."
-                )
-
-    st.stop()
 
 
 @lru_cache(maxsize=1)

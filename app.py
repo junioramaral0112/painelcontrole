@@ -23,10 +23,6 @@ import ui
 
 ui.configurar_pagina("Control Tower - Vocollect VoiceLink", "📡")
 
-# Portão de login: sem credencial válida do VoiceLink nada renderiza
-# daqui para baixo. A autenticação vale para a sessão do navegador.
-ui.exigir_login()
-
 # No modo estático isto só reprograma a releitura do banco; no modo
 # apresentação é o que dispara a troca para o painel da próxima região.
 presentation.tick("tempo_real", config.DASHBOARD_REFRESH_SECONDS * 1000)
