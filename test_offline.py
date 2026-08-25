@@ -381,6 +381,22 @@ assert ui.avatar_data_uri("") .startswith("data:image/svg+xml;base64,"), "ID vaz
 print("OK: avatar_data_uri -> estável, único por operador e tolerante a ID vazio")
 
 
+# Nomes dos operadores: lookup centralizado com tolerância de formato.
+print("\n== Testando nomes dos operadores ==")
+assert ui.nome_operador("09524025") == "NATAN FERREIRA"
+assert ui.nome_operador(9524025) == "NATAN FERREIRA", (
+    "ID vindo como inteiro perde o zero à esquerda — precisa resolver igual"
+)
+assert ui.nome_operador("81265690") == "ELIEZERD CALDERON LOZADA"
+assert ui.nome_operador(81296931) == "DEBORAH ACSA"
+assert ui.nome_operador("00099999") == "00099999", (
+    "ID desconhecido tem que aparecer como ele mesmo, sem quebrar"
+)
+assert ui.nome_operador(None) == ""
+assert ui.nome_operador("") == ""
+print("OK: nome_operador -> string/inteiro, com/sem zero, fallback para o próprio ID")
+
+
 # Logo do cabeçalho: presente ou não, a tela tem que subir.
 print("\n== Testando logo do cabeçalho ==")
 import config as _config

@@ -67,8 +67,9 @@ ORDER_POLL_INTERVAL_SECONDS = int(os.getenv("ORDER_POLL_INTERVAL_SECONDS", "900"
 # para a próxima (seção 5.4).
 PRESENTATION_INTERVAL_SECONDS = int(os.getenv("PRESENTATION_INTERVAL_SECONDS", "15"))
 
-# De quanto em quanto tempo as telas releem o banco no modo estático.
-DASHBOARD_REFRESH_SECONDS = int(os.getenv("DASHBOARD_REFRESH_SECONDS", "15"))
+# Valor inicial do slider "Tempo de atualização" da barra lateral —
+# de quanto em quanto tempo as telas releem o banco no modo estático.
+DASHBOARD_REFRESH_SECONDS = int(os.getenv("DASHBOARD_REFRESH_SECONDS", "60"))
 
 # Logo exibida no cabeçalho das duas telas. Se o arquivo não existir, o
 # cabeçalho aparece só com o título — não quebra nada.

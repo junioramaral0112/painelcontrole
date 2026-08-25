@@ -23,9 +23,17 @@ import ui
 
 ui.configurar_pagina("Control Tower - Vocollect VoiceLink", "📡")
 
+# Intervalo de releitura dos dados: o slider da barra lateral grava o
+# valor no session_state, e esta leitura roda ANTES de o widget ser
+# desenhado — então o valor aplicado aqui é o escolhido no rerun
+# anterior, que é justamente o ciclo que o autorefresh dispara.
+intervalo_dados = st.session_state.get(
+    "ct_intervalo_dados", config.DASHBOARD_REFRESH_SECONDS
+)
+
 # No modo estático isto só reprograma a releitura do banco; no modo
 # apresentação é o que dispara a troca para o painel da próxima região.
-presentation.tick("tempo_real", config.DASHBOARD_REFRESH_SECONDS * 1000)
+presentation.tick("tempo_real", intervalo_dados * 1000)
 
 modo_tv = presentation.ativo()
 if modo_tv:
@@ -34,6 +42,15 @@ if modo_tv:
     presentation.barra_apresentacao("Tempo Real")
 else:
     presentation.controles_sidebar()
+    with st.sidebar:
+        st.divider()
+        st.caption("ATUALIZAÇÃO")
+        st.slider(
+            "Tempo de atualização (segundos)",
+            min_value=10, max_value=300, value=config.DASHBOARD_REFRESH_SECONDS,
+            step=5, key="ct_intervalo_dados",
+            help="De quanto em quanto tempo a tela relê o banco.",
+        )
 
 # Tamanhos das fontes dos gráficos: o SVG do Plotly não responde a CSS,
 # então no modo apresentação o tamanho da TV precisa vir daqui.
@@ -91,17 +108,26 @@ st.divider()
 # --- Produtividade Individual por Operador ---------------------------------
 st.subheader("👷 Produtividade Individual dos Operadores (apenas em produção)")
 
+# Nome legível do operador no lugar do ID numérico (o VoiceLink só
+# entrega o ID) — usado pela tabela e pelo gráfico lado a lado.
+operadores_com_nome = (
+    operadores.assign(
+        operador_nome=operadores["operador_id"].map(ui.nome_operador)
+    )
+    if not operadores.empty else operadores
+)
+
 c1, c2 = st.columns([1.3, 1])
 with c1:
-    if operadores.empty:
+    if operadores_com_nome.empty:
         st.info("Nenhum operador com produção registrada no momento.")
     else:
         st.dataframe(
-            operadores[["operador_id", "region_name", "quantidade", "tempo_total",
-                        "meta", "produtividade_real", "pct_meta"]]
+            operadores_com_nome[["operador_nome", "region_name", "quantidade", "tempo_total",
+                                 "meta", "produtividade_real", "pct_meta"]]
             .sort_values("pct_meta", ascending=False)
             .rename(columns={
-                "operador_id": "Operador", "region_name": "Região",
+                "operador_nome": "Operador", "region_name": "Região",
                 "quantidade": "Quantidade", "tempo_total": "Tempo Total",
                 "meta": "Meta", "produtividade_real": "Produtividade Real",
                 "pct_meta": "% Meta",
@@ -112,13 +138,13 @@ with c1:
             },
         )
 with c2:
-    if not operadores.empty:
+    if not operadores_com_nome.empty:
         # Aqui a cor codifica pct_meta, que é uma variável diferente da
         # altura (produtividade_real) — então o gradiente tem razão de
         # existir. Só não pode ser um que comece no branco: usa o ramp
         # limitado do ui.py, que nunca se dissolve na superfície.
         fig_ops = px.bar(
-            operadores, x="operador_id", y="produtividade_real", color="pct_meta",
+            operadores_com_nome, x="operador_nome", y="produtividade_real", color="pct_meta",
             title="Produtividade Real por Operador",
             color_continuous_scale=ui.SEQUENCIAL,
         )

@@ -285,6 +285,43 @@ def css_modo_apresentacao():
     )
 
 
+# --- Nomes dos operadores (ID -> nome) ------------------------------------
+# O VoiceLink só expõe o ID numérico do operador; os nomes vieram do RH e
+# ficam centralizados aqui para as duas telas mostrarem o mesmo. O lookup
+# é tolerante: aceita string ou inteiro, com ou sem zero à esquerda
+# (09524025 e 9524025 resolvem para a mesma pessoa). ID fora da lista
+# aparece como ele mesmo — nada de quebrar a tela por causa de novato.
+NOMES_OPERADORES = {
+    "81265690": "ELIEZERD CALDERON LOZADA",
+    "81268241": "ADRIANA SILVA",
+    "81296913": "GILVANA SOUZA",
+    "81288345": "RAFAELA DA SILVA",
+    "81296923": "WILLIAM GUILHERME",
+    "09524025": "NATAN FERREIRA",
+    "81243677": "HENRY ROBERT",
+    "81296931": "DEBORAH ACSA",
+    "81296911": "LUIS ANTONIO",
+    "09528072": "MAYCON SILVEIRA",
+}
+
+_NOMES_OPERADORES_SEM_ZERO = {
+    chave.lstrip("0"): valor for chave, valor in NOMES_OPERADORES.items()
+}
+
+
+def nome_operador(identificador) -> str:
+    """Nome legível do operador a partir do ID (ou o próprio ID, se
+    desconhecido). Aceita None, string e inteiro."""
+    if identificador is None:
+        return ""
+    texto = str(identificador).strip()
+    if not texto:
+        return ""
+    if texto in NOMES_OPERADORES:
+        return NOMES_OPERADORES[texto]
+    return _NOMES_OPERADORES_SEM_ZERO.get(texto.lstrip("0"), texto)
+
+
 # --- Avatares (seção 5.3: v1 sem fotos reais) -----------------------------
 
 def avatar_data_uri(identificador: str) -> str:

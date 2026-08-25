@@ -32,7 +32,12 @@ MESES = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho",
 
 ui.configurar_pagina("Histórico por Região — Control Tower", "📊")
 
-presentation.tick("historico", config.DASHBOARD_REFRESH_SECONDS * 1000)
+# Mesmo intervalo de releitura do slider da tela de Tempo Real — o
+# session_state é compartilhado entre as páginas da mesma sessão.
+intervalo_dados = st.session_state.get(
+    "ct_intervalo_dados", config.DASHBOARD_REFRESH_SECONDS
+)
+presentation.tick("historico", intervalo_dados * 1000)
 
 modo_tv = presentation.ativo()
 if modo_tv:
@@ -156,7 +161,10 @@ def tabela_top5(dados: list, titulo: str, config_colunas: dict):
         st.caption("Sem operadores com produção neste dia.")
         return
     tabela = pd.DataFrame(dados)
-    tabela.insert(0, "avatar", tabela["operador_id"].map(ui.avatar_data_uri))
+    # Nome legível no lugar do ID numérico; o avatar usa as iniciais do
+    # nome (mesma paleta do avatar por ID).
+    tabela.insert(0, "operador_nome", tabela["operador_id"].map(ui.nome_operador))
+    tabela.insert(0, "avatar", tabela["operador_nome"].map(ui.avatar_data_uri))
     st.dataframe(
         tabela, hide_index=True, width="stretch",
         column_config=config_colunas,
@@ -172,7 +180,7 @@ with col_sep:
     )[:5]
     colunas = {
         "avatar": st.column_config.ImageColumn("", width="small"),
-        "operador_id": st.column_config.TextColumn("Operador"),
+        "operador_nome": st.column_config.TextColumn("Operador"),
         "quantidade": st.column_config.NumberColumn("Qtda Total", format="%d"),
     }
     if tem_pedidos:
@@ -187,7 +195,7 @@ with col_prod:
         top_produtividade, "TOP 5 — PRODUTIVIDADE",
         {
             "avatar": st.column_config.ImageColumn("", width="small"),
-            "operador_id": st.column_config.TextColumn("Operador"),
+            "operador_nome": st.column_config.TextColumn("Operador"),
             "produtividade_real": st.column_config.NumberColumn(
                 "Produtividade", format="%.0f /h"
             ),
