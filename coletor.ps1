@@ -524,6 +524,10 @@ function Invoke-Ciclo {
         "tarefa=$($tarefa.Count) trabalho=$($trabalho.Count) " +
         "prod_regiao=$($prodRegiao.Count) falta=$($falta.Count) " +
         "operadores=$($operadores.Count)")
+    if ($prodRegiao.Count -eq 0) {
+        Write-Host ("  ATENÇÃO: endpoint -1016 (Produtividade por Região) " +
+            "voltou sem objetos — a tabela produtividade_regiao fica vazia") -ForegroundColor Yellow
+    }
 }
 
 function Send-LogFalha {
