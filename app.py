@@ -113,15 +113,21 @@ total_restante = trabalho["itens_restantes"].sum() if not trabalho.empty else 0
 operadores_ativos = len(operadores)
 
 # Cor contextual do valor da meta: >=100 verde, 85-99 laranja, <85 vermelho.
+# Média simples de pct_meta das regiões ativas, ignorando nulos (região
+# que não trouxe percentual não derruba o KPI).
 if not prod_regiao.empty:
-    media_meta = prod_regiao["pct_meta"].mean()
-    if media_meta >= 100:
-        classe_meta = "ct-kpi-bom"
-    elif media_meta >= 85:
-        classe_meta = "ct-kpi-medio"
+    valores_meta = prod_regiao["pct_meta"].dropna()
+    media_meta = valores_meta.mean() if not valores_meta.empty else None
+    if media_meta is not None:
+        if media_meta >= 100:
+            classe_meta = "ct-kpi-bom"
+        elif media_meta >= 85:
+            classe_meta = "ct-kpi-medio"
+        else:
+            classe_meta = "ct-kpi-ruim"
+        valor_meta = f"{media_meta:.1f}%"
     else:
-        classe_meta = "ct-kpi-ruim"
-    valor_meta = f"{media_meta:.1f}%"
+        classe_meta, valor_meta = "", "—"
 else:
     classe_meta, valor_meta = "", "—"
 

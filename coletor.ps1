@@ -130,13 +130,31 @@ function Get-Campo {
 function To-NullableInt {
     param($Valor)
     if ($null -eq $Valor -or $Valor -is [DBNull]) { return $null }
-    return [int]$Valor
+    # Tolerante a formato: "1.234" e "1,234" (separadores de milhar)
+    # viram 1234. Nunca estoura — valor estranho vira $null em vez de
+    # derrubar o ciclo de coleta inteiro.
+    $texto = ([string]$Valor).Trim()
+    if ($texto -eq "") { return $null }
+    $texto = $texto -replace "[.,]", ""
+    try { return [int]$texto } catch { return $null }
 }
 
 function To-NullableDouble {
     param($Valor)
     if ($null -eq $Valor -or $Valor -is [DBNull]) { return $null }
-    return [double]$Valor
+    # Tolerante aos formatos que o VoiceLink manda por aí: "132.12",
+    # "132,12", "132,12%", "1.234,56" (milhar + vírgula decimal).
+    # Vírgula vira ponto SÓ quando é separador decimal; nunca estoura —
+    # valor estranho vira $null em vez de derrubar o ciclo.
+    $texto = ([string]$Valor).Trim()
+    if ($texto -eq "") { return $null }
+    $texto = $texto -replace "%", ""
+    if ($texto -match "^[-+]?\d+,\d+$") {
+        $texto = $texto -replace ",", "."
+    } elseif ($texto -match "^[-+]?\d{1,3}(\.\d{3})+,\d+$") {
+        $texto = ($texto -replace "\.", "") -replace ",", "."
+    }
+    try { return [double]$texto } catch { return $null }
 }
 
 function New-Timestamp {
@@ -216,9 +234,8 @@ function Invoke-VoiceLinkLogin {
     return $session
 }
 
-function Invoke-VoiceLinkJson {
-    param($Session, [string]$Path, [hashtable]$Query)
-
+function Build-VoiceLinkUri {
+    param([string]$Path, [hashtable]$Query)
     $pares = @()
     foreach ($chave in $Query.Keys) {
         $pares += "{0}={1}" -f [Uri]::EscapeDataString([string]$chave),
@@ -226,9 +243,14 @@ function Invoke-VoiceLinkJson {
     }
     $uri = "$VOICELINK_BASE_URL$Path"
     if ($pares.Count -gt 0) { $uri += "?" + ($pares -join "&") }
+    return $uri
+}
+
+function Invoke-VoiceLinkJson {
+    param($Session, [string]$Path, [hashtable]$Query)
 
     $params = @{
-        Uri        = $uri
+        Uri        = (Build-VoiceLinkUri $Path $Query)
         Method     = "Get"
         WebSession = $Session
         TimeoutSec = $REQUEST_TIMEOUT_SECONDS
@@ -527,6 +549,23 @@ function Invoke-Ciclo {
     if ($prodRegiao.Count -eq 0) {
         Write-Host ("  ATENÇÃO: endpoint -1016 (Produtividade por Região) " +
             "voltou sem objetos — a tabela produtividade_regiao fica vazia") -ForegroundColor Yellow
+        # Diagnóstico: traz o CORPO CRU da resposta (a mesma URL, sem
+        # parse) para o console — revela se voltou HTML, erro ou JSON
+        # vazio, e se os campos têm outro formato (%, vírgula...).
+        try {
+            $rawParams = @{
+                Uri        = (Build-VoiceLinkUri "/selection/assignment/getSummaryData.action" $q)
+                Method     = "Get"
+                WebSession = $Session
+                TimeoutSec = $REQUEST_TIMEOUT_SECONDS
+            }
+            if ($Script:SkipCertOk) { $rawParams["SkipCertificateCheck"] = $true }
+            $raw = Invoke-WebRequest @rawParams
+            $pedaco = $raw.Content.Substring(0, [Math]::Min(400, $raw.Content.Length))
+            Write-Host "  (primeiros 400 chars da resposta do -1016: $pedaco)" -ForegroundColor Yellow
+        } catch {
+            Write-Host "  (não foi possível ler o corpo cru do -1016: $_)"
+        }
     }
 }
 
