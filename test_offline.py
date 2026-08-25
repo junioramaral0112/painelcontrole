@@ -19,6 +19,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # um caminho válido no Windows e no Linux (o "/tmp" fixo que estava aqui
 # só funcionava fora do Windows, que é justamente onde o painel roda).
 DB_TESTE = os.path.join(tempfile.gettempdir(), "test_control_tower.db")
+# Reset a cada execução: sem isso, rodadas repetidas acumulam linhas
+# duplicadas e asserções de contagem ficam frágeis.
+if os.path.exists(DB_TESTE):
+    os.remove(DB_TESTE)
 os.environ["DB_PATH"] = DB_TESTE
 # O teste roda SEMPRE no SQLite local, mesmo que o ambiente tenha
 # DATABASE_URL definida (nada de apontar os testes para o Postgres).
@@ -427,6 +431,55 @@ assert ui.logo_data_uri().startswith("data:image/png"), (
 _config.LOGO_PATH = _caminho_real
 ui.logo_data_uri.cache_clear()
 print("OK: logo ausente ou corrompida não derruba a tela")
+
+
+# =========================================================================
+# Último snapshot POR REGIÃO (get_latest_por_regiao)
+# =========================================================================
+print("\n== Testando get_latest_por_regiao ==")
+
+_t1 = "2026-08-25 10:00:00"
+_t2 = "2026-08-25 10:05:00"
+with db.get_connection() as conn:
+    conn.execute(
+        _text(
+            """INSERT INTO produtividade_regiao
+               (captured_at, region_number, region_name, quantidade_total,
+                produtividade_atual, numero_operadores, pct_meta, tempo_total, meta)
+               VALUES (:captured_at, :region_number, :region_name, :quantidade_total,
+                       :produtividade_atual, :numero_operadores, :pct_meta,
+                       :tempo_total, :meta)"""
+        ),
+        [
+            {"captured_at": _t1, "region_number": 99, "region_name": "Reg 99",
+             "quantidade_total": 100, "produtividade_atual": 100.0,
+             "numero_operadores": 2, "pct_meta": 50.0, "tempo_total": "02:00:00",
+             "meta": 1350.0},
+            {"captured_at": _t2, "region_number": 99, "region_name": "Reg 99",
+             "quantidade_total": 200, "produtividade_atual": 100.0,
+             "numero_operadores": 2, "pct_meta": 50.0, "tempo_total": "02:00:00",
+             "meta": 1350.0},
+            {"captured_at": _t1, "region_number": 98, "region_name": "Reg 98",
+             "quantidade_total": 50, "produtividade_atual": 50.0,
+             "numero_operadores": 1, "pct_meta": 50.0, "tempo_total": "01:00:00",
+             "meta": 1350.0},
+        ],
+    )
+
+_ultimas = db.get_latest_por_regiao("produtividade_regiao")
+# Testes anteriores também inserem na tabela (região 8 com timestamp
+# "agora"), então a conferência foca nas DUAS regiões deste teste.
+_minhas = {r["region_number"]: r for r in _ultimas if r["region_number"] in (98, 99)}
+assert set(_minhas) == {98, 99}, (
+    f"As duas regiões têm que aparecer; vieram {sorted(_minhas)}"
+)
+assert _minhas[99]["captured_at"] == _t2 and _minhas[99]["quantidade_total"] == 200, (
+    "Região com dois snapshots tem que devolver o MAIS RECENTE"
+)
+assert _minhas[98]["captured_at"] == _t1, (
+    "Região gravada só no instante antigo continua aparecendo — é o ponto todo"
+)
+print("OK: get_latest_por_regiao -> último snapshot de CADA região, sem sumir as atrasadas")
 
 
 # =========================================================================

@@ -517,7 +517,13 @@ function Invoke-Ciclo {
             detalhe     = "$($operadores.Count) operadores ativos"
         }
     )
-    Write-Host "$($Script:CapturedAt) coleta concluída: $($tarefa.Count) regiões, $($operadores.Count) operadores ativos"
+    # Contagem POR ENDPOINT: se algum endpoint voltar vazio (ex.:
+    # prod_regiao=0), o log mostra qual é antes de qualquer suspeita no
+    # banco ou no painel.
+    Write-Host ("$($Script:CapturedAt) coleta concluída: " +
+        "tarefa=$($tarefa.Count) trabalho=$($trabalho.Count) " +
+        "prod_regiao=$($prodRegiao.Count) falta=$($falta.Count) " +
+        "operadores=$($operadores.Count)")
 }
 
 function Send-LogFalha {

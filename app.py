@@ -94,9 +94,12 @@ with col_status:
 st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
 
 # --- Carrega os snapshots mais recentes de cada tabela --------------------
+# produtividade_regiao usa "último por região": se uma região foi gravada
+# num instante ligeiramente diferente das demais (retry/ciclo parcial),
+# ela ainda aparece — o último snapshot GLOBAL a faria sumir.
 tarefa = pd.DataFrame(db.get_latest_snapshot("resumo_tarefa"))
 trabalho = pd.DataFrame(db.get_latest_snapshot("resumo_trabalho"))
-prod_regiao = pd.DataFrame(db.get_latest_snapshot("produtividade_regiao"))
+prod_regiao = pd.DataFrame(db.get_latest_por_regiao("produtividade_regiao"))
 falta = pd.DataFrame(db.get_latest_snapshot("produtos_falta"))
 operadores = pd.DataFrame(db.get_latest_snapshot("produtividade_operador"))
 
@@ -258,10 +261,12 @@ with aba_visao:
                 title=None, markers=True,
                 color_discrete_sequence=ui.CATEGORICAS,
             )
-            # Título explícito no eixo X: sem ele algumas versões do Plotly
-            # renderizam o label como "undefined".
+            # Títulos explícitos nos eixos — e SEM title_font: um objeto
+            # de título com fonte mas sem texto faz o plotly.js renderizar
+            # a palavra "undefined" acima do gráfico. O subheader já
+            # rotula o gráfico, então ele fica sem título mesmo.
             fig_evolucao.update_layout(template="plotly_white", paper_bgcolor=ui.SUPERFICIE, plot_bgcolor=ui.SUPERFICIE,
-                font=dict(family=ui.FONTE, color=ui.TINTA_MUDA, size=FONTE_CHART), title_font=dict(color=ui.TINTA, size=TITULO_CHART),height=320, xaxis_title="Horário", yaxis_title="Itens Selecionados")
+                font=dict(family=ui.FONTE, color=ui.TINTA_MUDA, size=FONTE_CHART),height=320, xaxis_title="Horário", yaxis_title="Itens Selecionados")
             st.plotly_chart(fig_evolucao, width="stretch", key="graf_evolucao")
 
 

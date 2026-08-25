@@ -434,6 +434,39 @@ def get_latest_snapshot(table: str):
         return [dict(r._mapping) for r in cur.fetchall()]
 
 
+def get_latest_por_regiao(table: str):
+    """Linhas do último snapshot de CADA região — não só do timestamp
+    mais recente global.
+
+    O get_latest_snapshot pega o maior captured_at da tabela e devolve
+    só as linhas com exatamente aquele instante: se as regiões forem
+    gravadas em momentos diferentes (retry, ciclo parcial, relógio de
+    outra máquina), as regiões atrasadas simplesmente somem do painel.
+    Aqui cada região traz o seu próprio snapshot mais recente.
+
+    Escrito com JOIN + MAX agrupado em vez de DISTINCT ON de propósito:
+    assim a mesma query roda idêntica no SQLite e no PostgreSQL.
+    """
+    with get_connection() as conn:
+        cur = conn.execute(
+            text(
+                f"""
+                SELECT t.*
+                  FROM {table} AS t
+                  JOIN (
+                        SELECT region_number, MAX(captured_at) AS ultimo
+                          FROM {table}
+                         GROUP BY region_number
+                       ) AS u
+                    ON u.region_number = t.region_number
+                   AND u.ultimo = t.captured_at
+                 ORDER BY t.region_name
+                """
+            )
+        )
+        return [dict(r._mapping) for r in cur.fetchall()]
+
+
 def get_history(table: str, hours: int = 8):
     """Retorna histórico das últimas N horas, para curva de evolução.
 
