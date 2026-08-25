@@ -77,6 +77,15 @@ if ($env:CT_VOICELINK_PASSWORD) { $VOICELINK_PASSWORD = $env:CT_VOICELINK_PASSWO
 if ($env:CT_SUPABASE_URL)       { $SUPABASE_URL = $env:CT_SUPABASE_URL }
 if ($env:CT_SUPABASE_KEY)       { $SUPABASE_KEY = $env:CT_SUPABASE_KEY }
 
+# Normaliza a URL do PostgREST: aceita "https://projeto.supabase.co" OU
+# "https://projeto.supabase.co/rest/v1" (com ou sem barra final). Uma
+# base SEM o sufixo /rest/v1 monta URLs que o PostgREST rejeita com
+# {"error":"requested path is invalid"} — é o caso clássico desse erro.
+$SUPABASE_URL = $SUPABASE_URL.TrimEnd("/")
+if ($SUPABASE_URL -notmatch "/rest/v1$") {
+    $SUPABASE_URL = "$SUPABASE_URL/rest/v1"
+}
+
 # ---------------------------------------------------------------------------
 # Compatibilidade PowerShell 5.1 (padrão no Windows corporativo) e 7+
 # ---------------------------------------------------------------------------
@@ -367,8 +376,33 @@ function Send-SupabaseRows {
     $json  = ConvertTo-Json -InputObject @($Linhas) -Depth 5 -Compress
     $bytes = [Text.Encoding]::UTF8.GetBytes($json)
 
-    Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -Body $bytes `
-        -TimeoutSec $REQUEST_TIMEOUT_SECONDS -ErrorAction Stop | Out-Null
+    try {
+        Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -Body $bytes `
+            -TimeoutSec $REQUEST_TIMEOUT_SECONDS -ErrorAction Stop | Out-Null
+    } catch {
+        # Log de diagnóstico: URL exata chamada + status HTTP + corpo da
+        # resposta. A mensagem sobe para o loop principal e vai parar no
+        # coleta_log — o painel mostra o motivo da falha.
+        $detalhe = "Falha no envio para $uri : $_"
+        $resposta = $_.Exception.Response
+        if ($null -ne $resposta) {
+            try { $detalhe += " · HTTP $([int]$resposta.StatusCode)" } catch { }
+            try {
+                $stream = $resposta.GetResponseStream()
+                if ($null -ne $stream) {
+                    $leitor = New-Object IO.StreamReader($stream)
+                    $corpo = $leitor.ReadToEnd()
+                    $leitor.Close()
+                    if ($corpo) { $detalhe += " · body: $corpo" }
+                }
+            } catch { }
+        }
+        if ($_.ErrorDetails -and $_.ErrorDetails.Message) {
+            $detalhe += " · body: $($_.ErrorDetails.Message)"
+        }
+        Write-Host $detalhe -ForegroundColor Yellow
+        throw $detalhe
+    }
 }
 
 # ---------------------------------------------------------------------------
