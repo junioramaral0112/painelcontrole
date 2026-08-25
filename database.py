@@ -11,15 +11,16 @@ Dois backends, escolhidos pela variável DATABASE_URL:
 A troca é transparente para o resto do projeto: as funções públicas são
 as mesmas nos dois backends — só esta camada sabe qual está usando. O
 SQL é escrito com funções comuns aos dois (substr em vez de
-date()/strftime) e parâmetros nomeados; os poucos pontos em que os
-dialetos divergem de verdade (janela de "agora - N horas", upsert, DDL)
-são ramificados explicitamente em `USANDO_POSTGRES`.
+date()/strftime) e parâmetros nomeados; os filtros por tempo recebem o
+corte já calculado em Python (parâmetro :corte), e os poucos pontos em
+que os dialetos divergem de verdade (upsert, DDL) são ramificados
+explicitamente em `USANDO_POSTGRES`.
 
 Todas as tabelas e índices são criados automaticamente pelo init_db() em
 qualquer backend.
 """
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import URL
@@ -436,22 +437,24 @@ def get_latest_snapshot(table: str):
 def get_history(table: str, hours: int = 8):
     """Retorna histórico das últimas N horas, para curva de evolução.
 
-    Aqui os dialetos divergem de verdade: o SQLite usa datetime('now')
-    e o PostgreSQL usa now() - make_interval(...).
+    O corte é calculado em Python e passado como parâmetro nomeado:
+    captured_at é TEXT de formato fixo ("YYYY-MM-DD HH:MM:SS"), então a
+    comparação lexical funciona idêntica no SQLite e no PostgreSQL — sem
+    depender de função de data de dialeto (datetime('now') / now()), que
+    é onde mora o ProgrammingError em um dos lados.
+
+    O corte usa a hora LOCAL da máquina, que é o mesmo relógio que
+    carimba captured_at na gravação — os dois conversam.
     """
     horas = max(1, int(hours))
-    if USANDO_POSTGRES:
-        condicao = "captured_at >= now() - make_interval(hours => :h)"
-        parametro = {"h": horas}
-    else:
-        condicao = "captured_at >= datetime('now', :h)"
-        parametro = {"h": f"-{horas} hours"}
+    corte = (datetime.now() - timedelta(hours=horas)).strftime("%Y-%m-%d %H:%M:%S")
     with get_connection() as conn:
         cur = conn.execute(
             text(
-                f"SELECT * FROM {table} WHERE {condicao} ORDER BY captured_at"
+                f"SELECT * FROM {table} "
+                "WHERE captured_at >= :corte ORDER BY captured_at"
             ),
-            parametro,
+            {"corte": corte},
         )
         return [dict(r._mapping) for r in cur.fetchall()]
 
@@ -867,23 +870,19 @@ def limpar_historico_antigo(dias: int = 60) -> dict:
     qualquer momento — o coletor chama 1x por dia, e o banco continua
     consistente entre uma limpeza e outra.
 
-    Nota: `now()` (SQLite e PostgreSQL) é UTC e captured_at é hora
-    local — a diferença de horas é irrelevante numa janela de 60 dias.
+    Mesma portabilidade do get_history: o corte vem calculado em Python
+    (hora local, o mesmo relógio do captured_at) e entra como parâmetro
+    nomeado — sem função de data de dialeto no SQL.
     """
     dias = max(1, int(dias))
-    if USANDO_POSTGRES:
-        corte = "(now() - make_interval(days => :d))"
-        parametro = {"d": dias}
-    else:
-        corte = "datetime('now', :d)"
-        parametro = {"d": f"-{dias} days"}
+    corte = (datetime.now() - timedelta(days=dias)).strftime("%Y-%m-%d %H:%M:%S")
 
     apagados = {}
     with get_connection() as conn:
         for tabela in TABELAS_COM_HISTORICO:
             resultado = conn.execute(
-                text(f"DELETE FROM {tabela} WHERE captured_at < {corte}"),
-                parametro,
+                text(f"DELETE FROM {tabela} WHERE captured_at < :corte"),
+                {"corte": corte},
             )
             apagados[tabela] = resultado.rowcount or 0
     return apagados

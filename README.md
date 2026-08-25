@@ -83,9 +83,9 @@ conexão PostgreSQL, ex.:
 
 As tabelas e índices são criados automaticamente na inicialização, em
 qualquer backend. O SQL das queries é escrito para funcionar nos dois
-(parâmetros nomeados, `substr` em vez de `date()`/`strftime`); os pontos
-em que os dialetos divergem (DDL, upsert, janela das "últimas 8h") são
-ramificados dentro do `database.py`.
+(parâmetros nomeados, `substr` em vez de `date()`/`strftime`, filtros de
+tempo com o corte calculado em Python); os pontos em que os dialetos
+divergem (DDL e upsert) são ramificados dentro do `database.py`.
 
 Retenção: o coletor apaga snapshots com mais de `RETENCAO_DIAS` dias
 (padrão 60) — uma vez na subida e depois no máximo 1x por dia, via
