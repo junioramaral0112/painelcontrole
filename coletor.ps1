@@ -162,6 +162,17 @@ function New-Timestamp {
     $Script:CapturedDia = $Script:CapturedAt.Substring(0, 10)
 }
 
+function Convert-ContentParaTexto {
+    param($Content)
+    # No PS 5.1 o .Content do Invoke-WebRequest vem como [byte[]] quando
+    # o content-type não é texto (ex.: application/json); no PS 7+ já vem
+    # como string. Normaliza os dois para string UTF-8.
+    if ($Content -is [byte[]]) {
+        return [System.Text.Encoding]::UTF8.GetString($Content)
+    }
+    return [string]$Content
+}
+
 function Test-FalhaTransitoria {
     param($Erro)
     # Retry só vale para falha de CONEXÃO. Erro de negócio (ex.: 401/403
@@ -561,8 +572,11 @@ function Invoke-Ciclo {
             }
             if ($Script:SkipCertOk) { $rawParams["SkipCertificateCheck"] = $true }
             $raw = Invoke-WebRequest @rawParams
-            $pedaco = $raw.Content.Substring(0, [Math]::Min(400, $raw.Content.Length))
-            Write-Host "  (primeiros 400 chars da resposta do -1016: $pedaco)" -ForegroundColor Yellow
+            $texto = Convert-ContentParaTexto $raw.Content
+            $pedaco = $texto.Substring(0, [Math]::Min(400, $texto.Length))
+            Write-Host ("  (HTTP $($raw.StatusCode) · " +
+                "$($raw.Headers['Content-Type']) · primeiros 400 chars " +
+                "do corpo do -1016: $pedaco)") -ForegroundColor Yellow
         } catch {
             Write-Host "  (não foi possível ler o corpo cru do -1016: $_)"
         }
