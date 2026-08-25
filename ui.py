@@ -151,6 +151,52 @@ CSS = f"""
       color: {TINTA_MUDA}; margin: 6px 0 8px 0;
   }}
 
+  /* Badge "Ao Vivo" do cabeçalho (ponto verde pulsante) */
+  .ct-live-badge {{
+      display: inline-flex; align-items: center; gap: 8px;
+      background: #E8F5E9; border: 1px solid #C8E6C9; border-radius: 999px;
+      padding: 6px 14px; font-family: {FONTE}; font-size: 14px;
+      color: #1B5E20; font-weight: 500; white-space: nowrap;
+  }}
+  .ct-live-badge.ct-live-off {{
+      background: #FAFAFA; border-color: #E0E0E0; color: #616161;
+  }}
+  .ct-live-badge.ct-live-erro {{
+      background: #FDECEA; border-color: #F5C6C0; color: #B71C1C;
+  }}
+  .ct-live-dot {{
+      width: 10px; height: 10px; border-radius: 50%;
+      background: #2E7D32; flex: 0 0 auto;
+  }}
+  .ct-live-off .ct-live-dot {{ background: #9E9E9E; }}
+  .ct-live-erro .ct-live-dot {{ background: #D32F2F; }}
+  .ct-live-badge:not(.ct-live-off):not(.ct-live-erro) .ct-live-dot {{
+      animation: ct-pulse 2s infinite;
+  }}
+  @keyframes ct-pulse {{
+      0%   {{ box-shadow: 0 0 0 0 rgba(46,125,50,0.5); }}
+      70%  {{ box-shadow: 0 0 0 8px rgba(46,125,50,0); }}
+      100% {{ box-shadow: 0 0 0 0 rgba(46,125,50,0); }}
+  }}
+
+  /* Cards de KPI do topo (redesign) */
+  .ct-kpi-card {{
+      background: #F8F9FA; border: 1px solid #E0E0E0; border-radius: 12px;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.05); padding: 14px 16px; height: 100%;
+  }}
+  .ct-kpi-label {{
+      font-family: {FONTE}; font-size: 13px; color: {TINTA_2};
+      margin: 0 0 4px 0; font-weight: 500;
+  }}
+  .ct-kpi-value {{
+      font-family: {FONTE}; font-size: 28px; font-weight: 600;
+      color: {TINTA}; margin: 0;
+  }}
+  /* Cores contextuais do valor (meta): >=100 verde, 85-99 laranja, <85 vermelho */
+  .ct-kpi-value.ct-kpi-bom   {{ color: {BOM}; }}
+  .ct-kpi-value.ct-kpi-medio {{ color: #B26A00; }}
+  .ct-kpi-value.ct-kpi-ruim  {{ color: {RUIM}; }}
+
   /* Barra do modo apresentação */
   .ct-pres-bar {{
       background: {SUPERFICIE}; border: 1px solid {BORDA}; border-radius: 8px;
@@ -279,6 +325,9 @@ def css_modo_apresentacao():
           .ct-card-foot { font-size: 18px; }
           .ct-rowlabel { font-size: 17px; }
           .ct-pres-bar { font-size: 18px; }
+          .ct-live-badge { font-size: 16px; }
+          .ct-kpi-label { font-size: 16px; }
+          .ct-kpi-value { font-size: 38px; }
         </style>
         """,
         unsafe_allow_html=True,
