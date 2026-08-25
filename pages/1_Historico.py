@@ -46,7 +46,10 @@ if modo_tv:
 
 
 # --- Seleção da região ----------------------------------------------------
-# No modo apresentação quem manda é a rotação; no modo estático, o usuário.
+# 0 = "Todas as Regiões" (as regiões reais vão de 6 a 9, então não
+# colide). No modo apresentação quem manda é a rotação; no estático, o
+# usuário — com a visão consolidada como primeira opção.
+TODAS = 0
 if modo_tv:
     regiao_num = presentation.regiao_alvo()
     if regiao_num not in config.REGIONS:
@@ -57,19 +60,33 @@ else:
         st.divider()
         st.caption("REGIÃO")
         regiao_num = st.radio(
-            "Região", options=list(config.REGIONS.keys()),
-            format_func=lambda n: config.REGIONS[n],
+            "Região", options=[TODAS, *config.REGIONS.keys()],
+            format_func=lambda n: "Todas as Regiões" if n == TODAS else config.REGIONS[n],
             label_visibility="collapsed",
         )
 
-regiao_nome = config.REGIONS[regiao_num]
+if regiao_num == TODAS:
+    regiao_nome = "Todas as Regiões"
+    regioes_alvo = list(config.REGIONS.keys())
+else:
+    regiao_nome = config.REGIONS[regiao_num]
+    regioes_alvo = [regiao_num]
 
 if modo_tv:
     presentation.barra_apresentacao(regiao_nome)
 
 
 # --- Filtro de data (ano -> mês -> dia) -----------------------------------
-datas = db.get_datas_disponiveis(regiao_num)
+# Datas disponíveis: na visão "Todas as Regiões", a união dos dias que
+# têm dados em QUALQUER região.
+if regiao_num == TODAS:
+    datas = sorted({
+        dia
+        for r in regioes_alvo
+        for dia in db.get_datas_disponiveis(r)
+    })
+else:
+    datas = db.get_datas_disponiveis(regiao_num)
 
 ui.cabecalho(f"Painel de Produtividade — {regiao_nome}")
 
@@ -142,14 +159,61 @@ st.divider()
 
 
 # --- Dados do dia e do mês ------------------------------------------------
-operadores = db.get_operadores_do_dia(regiao_num, dia_sel)
-totais_dia = db.get_totais_regiao_dia(regiao_num, dia_sel)
-totais_mes = db.get_totais_regiao_mes(regiao_num, ano_mes)
-serie_dias = db.get_serie_por_dia(regiao_num, ano_mes)
+# Na visão "Todas as Regiões" cada métrica é consolidada somando as
+# regiões, com a mesma semântica do banco: contadores acumulados por
+# região viram o total do conjunto, e a taxa é itens ÷ horas-operador
+# somados (ponderada, não média de taxas). A meta fica vazia — goalRate
+# é por região, e inventar uma meta consolidada seria mentir no card.
+if regiao_num == TODAS:
+    operadores = [
+        op
+        for r in regioes_alvo
+        for op in db.get_operadores_do_dia(r, dia_sel)
+    ]
+
+    parciais_dia = [t for r in regioes_alvo
+                    for t in [db.get_totais_regiao_dia(r, dia_sel)] if t]
+    if parciais_dia:
+        qtd_dia = sum(t["quantidade"] or 0 for t in parciais_dia)
+        horas_dia = sum(db.parse_tempo_total(t["tempo_total"]) for t in parciais_dia)
+        totais_dia = {
+            "quantidade": qtd_dia,
+            "produtividade_atual": (qtd_dia / horas_dia) if horas_dia > 0 else 0.0,
+            "meta": None,
+        }
+    else:
+        totais_dia = None
+
+    parciais_mes = [t for r in regioes_alvo
+                    for t in [db.get_totais_regiao_mes(r, ano_mes)] if t]
+    if parciais_mes:
+        qtd_mes = sum(t["quantidade"] or 0 for t in parciais_mes)
+        horas_mes = sum(t["horas"] or 0 for t in parciais_mes)
+        totais_mes = {
+            "quantidade": qtd_mes,
+            "horas": horas_mes,
+            "produtividade_atual": (qtd_mes / horas_mes) if horas_mes > 0 else 0.0,
+            "meta": None,
+            "dias_com_dado": max(t["dias_com_dado"] for t in parciais_mes),
+        }
+    else:
+        totais_mes = None
+
+    por_dia = {}
+    for r in regioes_alvo:
+        for d in db.get_serie_por_dia(r, ano_mes):
+            por_dia[d["dia"]] = por_dia.get(d["dia"], 0) + (d["quantidade"] or 0)
+    serie_dias = [{"dia": dia, "quantidade": total}
+                  for dia, total in sorted(por_dia.items())]
+else:
+    operadores = db.get_operadores_do_dia(regiao_num, dia_sel)
+    totais_dia = db.get_totais_regiao_dia(regiao_num, dia_sel)
+    totais_mes = db.get_totais_regiao_mes(regiao_num, ano_mes)
+    serie_dias = db.get_serie_por_dia(regiao_num, ano_mes)
 
 tem_pedidos = db.tem_dados_de_pedidos()
-pedidos_dia = db.get_pedidos_dia(regiao_num, dia_sel) if tem_pedidos else None
-pedidos_mes = db.get_pedidos_mes(regiao_num, ano_mes) if tem_pedidos else None
+pedidos_dia = sum(db.get_pedidos_dia(r, dia_sel) for r in regioes_alvo) if tem_pedidos else None
+pedidos_mes = sum(db.get_pedidos_mes(r, ano_mes) for r in regioes_alvo) if tem_pedidos else None
 
 meta_regiao = (totais_dia or {}).get("meta") or (totais_mes or {}).get("meta")
 
@@ -273,10 +337,32 @@ with g1:
 with g2:
     # Plota itens por HORA-OPERADOR, que é a mesma unidade da meta — e não
     # a vazão da região, que com vários operadores seria várias vezes
-    # maior e faria a linha da meta parecer baixa.
-    horas = db.derivar_series_horarias(
-        db.get_acumulado_por_hora(regiao_num, dia_sel)
-    )
+    # maior e faria a linha da meta parecer baixa. Na visão "Todas as
+    # Regiões", itens e horas-operador de cada hora somam entre regiões
+    # (a produtividade continua sendo itens ÷ hora-operador).
+    if regiao_num == TODAS:
+        itens_hora = [0.0] * 24
+        horas_hora = [0.0] * 24
+        for r in regioes_alvo:
+            for h in db.derivar_series_horarias(
+                db.get_acumulado_por_hora(r, dia_sel)
+            ):
+                itens_hora[h["hora"]] += h["itens"]
+                horas_hora[h["hora"]] += h["horas_operador"]
+        horas = [
+            {
+                "hora": h,
+                "itens": itens_hora[h],
+                "horas_operador": horas_hora[h],
+                "produtividade": (itens_hora[h] / horas_hora[h])
+                if horas_hora[h] > 0 else 0.0,
+            }
+            for h in range(24)
+        ]
+    else:
+        horas = db.derivar_series_horarias(
+            db.get_acumulado_por_hora(regiao_num, dia_sel)
+        )
     st.plotly_chart(
         ui.grafico_area(
             [h["hora"] for h in horas], [h["produtividade"] for h in horas],

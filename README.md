@@ -134,8 +134,9 @@ conta da rede — por isso é importante NÃO expor o Streamlit à internet
 (a seção de segurança tem os porquês). O `auth.py` continua no projeto:
 é a autenticação que o coletor usa contra o VoiceLink.
 
-**Histórico por Região** (`pages/1_Historico.py`) — um painel por região,
-no estilo dos painéis de produtividade já usados na fábrica:
+**Histórico por Região** (`pages/1_Historico.py`) — um painel por região
+(ou **Todas as Regiões**, que consolida as regiões somadas), no estilo
+dos painéis de produtividade já usados na fábrica:
 
 - filtro de data em abas clicáveis: **ano → mês → dia** (só aparecem
   datas que realmente têm coleta);
