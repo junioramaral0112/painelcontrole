@@ -89,10 +89,19 @@ if ($SUPABASE_URL -notmatch "/rest/v1$") {
 # ---------------------------------------------------------------------------
 # Compatibilidade PowerShell 5.1 (padrão no Windows corporativo) e 7+
 # ---------------------------------------------------------------------------
-# TLS 1.2+: o Supabase exige; o default antigo do .NET Framework é TLS 1.0.
+# Configuração explícita de conexão, ANTES de qualquer requisição web.
+# O erro clássico do PS 5.1 em HTTPS — "A conexão subjacente estava
+# fechada: Erro inesperado em um envio" — vem da negociação de protocolo
+# e do Expect-100-Continue; o SecurityProtocol fixado resolve o primeiro
+# e o Expect100Continue=$false o segundo. DefaultConnectionLimit sobe
+# para os dois hosts (VoiceLink + Supabase) não brigarem por conexão.
 try {
-    [Net.ServicePointManager]::SecurityProtocol =
-        [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    [System.Net.ServicePointManager]::SecurityProtocol =
+        [System.Net.SecurityProtocolType]::Tls12 -bor
+        [System.Net.SecurityProtocolType]::Tls11 -bor
+        [System.Net.SecurityProtocolType]::Tls
+    [System.Net.ServicePointManager]::Expect100Continue = $false
+    [System.Net.ServicePointManager]::DefaultConnectionLimit = 20
 } catch { }
 
 # Certificado autoassinado do VoiceLink. No PS 7+ existe o parâmetro
@@ -135,6 +144,51 @@ function New-Timestamp {
     $Script:CapturedDia = $Script:CapturedAt.Substring(0, 10)
 }
 
+function Test-FalhaTransitoria {
+    param($Erro)
+    # Retry só vale para falha de CONEXÃO. Erro de negócio (ex.: 401/403
+    # do PostgREST com chave errada) se resolve no código, não tentando
+    # de novo.
+    $ex = $Erro.Exception
+    $transitorios = @(
+        [Net.WebExceptionStatus]::ConnectFailure,
+        [Net.WebExceptionStatus]::ConnectionClosed,
+        [Net.WebExceptionStatus]::SendFailure,
+        [Net.WebExceptionStatus]::ReceiveFailure,
+        [Net.WebExceptionStatus]::Timeout,
+        [Net.WebExceptionStatus]::NameResolutionFailure,
+        [Net.WebExceptionStatus]::KeepAliveFailure
+    )
+    if ($ex -is [Net.WebException] -and $transitorios -contains $ex.Status) {
+        return $true
+    }
+    $msg = [string]$ex
+    if ($msg -match "conexão subjacente|underlying connection|connection was closed|tempo limite|timed out|erro inesperado|unexpected error") {
+        return $true
+    }
+    return $false
+}
+
+function Invoke-ComRetry {
+    param([scriptblock]$Acao, [int]$Tentativas = 2, [string]$Descricao = "")
+    # Retry defensivo para o sintoma "conexão fechada" do PS 5.1: tenta
+    # de novo (com espera crescente) só quando a falha é transitória.
+    $ultima = $null
+    for ($i = 1; $i -le $Tentativas; $i++) {
+        try {
+            return & $Acao
+        } catch {
+            $ultima = $_
+            if (-not (Test-FalhaTransitoria $ultima) -or $i -ge $Tentativas) {
+                break
+            }
+            Write-Host "  (${Descricao}: tentativa $i de $Tentativas falhou — reconectando em $($i * 2)s...)" -ForegroundColor Yellow
+            Start-Sleep -Seconds ($i * 2)
+        }
+    }
+    throw $ultima
+}
+
 # ---------------------------------------------------------------------------
 # VoiceLink
 # ---------------------------------------------------------------------------
@@ -151,7 +205,7 @@ function Invoke-VoiceLinkLogin {
     }
     if ($Script:SkipCertOk) { $params["SkipCertificateCheck"] = $true }
 
-    $resp = Invoke-WebRequest @params
+    $resp = Invoke-ComRetry { Invoke-WebRequest @params } -Descricao "login VoiceLink"
 
     # O VoiceLink não devolve um JSON claro de sucesso; o jeito confiável
     # é detectar a página de erro de credencial no HTML (como o
@@ -181,7 +235,7 @@ function Invoke-VoiceLinkJson {
     }
     if ($Script:SkipCertOk) { $params["SkipCertificateCheck"] = $true }
 
-    return Invoke-RestMethod @params
+    return Invoke-ComRetry { Invoke-RestMethod @params } -Descricao "GET VoiceLink"
 }
 
 function Get-Query {
@@ -377,8 +431,10 @@ function Send-SupabaseRows {
     $bytes = [Text.Encoding]::UTF8.GetBytes($json)
 
     try {
-        Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -Body $bytes `
-            -TimeoutSec $REQUEST_TIMEOUT_SECONDS -ErrorAction Stop | Out-Null
+        Invoke-ComRetry {
+            Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -Body $bytes `
+                -TimeoutSec $REQUEST_TIMEOUT_SECONDS -ErrorAction Stop | Out-Null
+        } -Descricao "POST $Tabela"
     } catch {
         # Log de diagnóstico: URL exata chamada + status HTTP + corpo da
         # resposta. A mensagem sobe para o loop principal e vai parar no
