@@ -142,17 +142,20 @@ with c3:
     )
 with c4:
     st.subheader("⚙️ Resumo do Trabalho Atual")
-    st.dataframe(
-        trabalho[["region_name", "itens_restantes", "operadores_trabalhando",
-                  "itens_selecionados", "operadores_atribuidos"]]
-        .rename(columns={
-            "region_name": "Região", "itens_restantes": "Itens Restantes",
-            "operadores_trabalhando": "Operadores Trabalhando",
-            "itens_selecionados": "Itens Selecionados",
-            "operadores_atribuidos": "Operadores Atribuídos",
-        }),
-        hide_index=True, width="stretch",
-    )
+    if trabalho.empty:
+        st.info("Aguardando dados da coleta...")
+    else:
+        st.dataframe(
+            trabalho[["region_name", "itens_restantes", "operadores_trabalhando",
+                      "itens_selecionados", "operadores_atribuidos"]]
+            .rename(columns={
+                "region_name": "Região", "itens_restantes": "Itens Restantes",
+                "operadores_trabalhando": "Operadores Trabalhando",
+                "itens_selecionados": "Itens Selecionados",
+                "operadores_atribuidos": "Operadores Atribuídos",
+            }),
+            hide_index=True, width="stretch",
+        )
 
 st.divider()
 
@@ -160,16 +163,19 @@ st.divider()
 c5, c6 = st.columns([1.2, 1])
 with c5:
     st.subheader("📊 Produtividade por Região")
-    st.dataframe(
-        prod_regiao[["region_name", "pct_meta", "produtividade_atual", "meta", "quantidade_total"]]
-        .rename(columns={
-            "region_name": "Região", "pct_meta": "% da Meta",
-            "produtividade_atual": "Produtividade (un/h)", "meta": "Meta",
-            "quantidade_total": "Quantidade",
-        }),
-        hide_index=True, width="stretch",
-        column_config={"% da Meta": st.column_config.NumberColumn(format="%.1f%%")},
-    )
+    if prod_regiao.empty:
+        st.info("Aguardando dados da coleta...")
+    else:
+        st.dataframe(
+            prod_regiao[["region_name", "pct_meta", "produtividade_atual", "meta", "quantidade_total"]]
+            .rename(columns={
+                "region_name": "Região", "pct_meta": "% da Meta",
+                "produtividade_atual": "Produtividade (un/h)", "meta": "Meta",
+                "quantidade_total": "Quantidade",
+            }),
+            hide_index=True, width="stretch",
+            column_config={"% da Meta": st.column_config.NumberColumn(format="%.1f%%")},
+        )
 with c6:
     if not prod_regiao.empty:
         # Cor sólida: a altura da barra já diz a magnitude, então pintar
