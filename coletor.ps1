@@ -273,15 +273,17 @@ function Invoke-VoiceLinkJson {
 
 function Get-Query {
     param([int]$ViewId, [bool]$ComTempSite = $true)
-    # Paginação do grid: os campos vão ZERADOS de propósito. O VoiceLink
-    # mantém estado de paginação na sessão e, sem o reset explícito, um
-    # quadro pode responder como se estivesse na página 2 — a resposta
-    # vinha com {"rowOffset":-24,"startIndex":24,...,"objects":[]} e a
-    # tabela ficava vazia (foi o caso do -1016 no PC corporativo).
-    # startIndex=0 + rowOffset=0 + previousRowCount=0 forçam a primeira
-    # página em TODOS os quadros, não só neste.
+    # Paginação do grid: os campos vão ZERADOS de propósito e `count`
+    # diz QUANTAS linhas buscar. O VoiceLink mantém estado de paginação
+    # na sessão e, sem o reset explícito, um quadro pode responder como
+    # se estivesse na página 2 — a resposta do -1016 no PC corporativo
+    # vinha com {"rowOffset":-24,"startIndex":24,...,"objects":[],"count":0}:
+    # o handler de GRID desse quadro lê `count` (que não era enviado) e
+    # com 0 linhas pedidas devolve objects vazio. Os quadros de sumário
+    # ignoram `count`, então enviar em todos é inofensivo.
     $q = [ordered]@{
         rowCount                = 5000
+        count                   = 50
         viewId                  = $ViewId
         firstTimeRun            = "true"
         rowsPerPage             = 24
