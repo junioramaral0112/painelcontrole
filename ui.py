@@ -334,6 +334,39 @@ def css_modo_apresentacao():
     )
 
 
+def card_kpi_topo(label: str, valor: str, classe: str = ""):
+    """Card de KPI do topo (estilo corporativo do redesign) — usado pelas
+    telas que mostram as 4 métricas principais."""
+    st.markdown(
+        f'<div class="ct-kpi-card">'
+        f'<p class="ct-kpi-label">{html.escape(label)}</p>'
+        f'<p class="ct-kpi-value {classe}">{valor}</p>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def badge_ao_vivo() -> str:
+    """HTML do badge de sincronização ao vivo (ponto pulsante + horário da
+    última coleta registrada no coleta_log)."""
+    status = db.get_last_collection_status()
+    if status is None:
+        return (
+            '<div class="ct-live-badge ct-live-off"><span class="ct-live-dot"></span>'
+            'Aguardando primeira coleta</div>'
+        )
+    hora = status["captured_at"][11:19]
+    if status["sucesso"]:
+        return (
+            f'<div class="ct-live-badge"><span class="ct-live-dot"></span>'
+            f'Operação Ao Vivo • Sincronizado às {hora}</div>'
+        )
+    return (
+        f'<div class="ct-live-badge ct-live-erro"><span class="ct-live-dot"></span>'
+        f'Sincronização falhou às {hora}</div>'
+    )
+
+
 # --- Nomes dos operadores (ID -> nome) ------------------------------------
 # O VoiceLink só expõe o ID numérico do operador; os nomes vieram do RH e
 # ficam centralizados aqui para as duas telas mostrarem o mesmo. O lookup

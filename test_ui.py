@@ -86,6 +86,17 @@ vazio = executar("pages/1_Historico.py", {"ct_regiao_alvo": 6,
 assert not vazio.error
 print("OK: região sem dados tratada sem exceção")
 
+print("\n== Cockpit de Velocímetros ==")
+cockpit = AppTest.from_file("pages/2_Cockpit_Operadores.py", default_timeout=TEMPO_LIMITE)
+cockpit.run()
+assert not cockpit.exception, [e.value for e in cockpit.exception]
+assert not cockpit.error, cockpit.error
+assert len(cockpit.tabs) == 2, (
+    f"Esperava as 2 abas de setor (Caixas/Bolsas); vieram {len(cockpit.tabs)}"
+)
+assert len(cockpit.dataframe) == 0, "O cockpit usa velocímetros, não dataframes"
+print("OK: cockpit renderizou com as 2 abas de setor, sem exceção")
+
 print("\n== Acesso aberto (sem tela de login) ==")
 # O painel renderiza direto: quem abrir a URL vê os dados, sem nenhuma
 # checagem de sessão. As DUAS páginas têm que mostrar conteúdo com o

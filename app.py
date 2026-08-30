@@ -132,25 +132,15 @@ else:
     classe_meta, valor_meta = "", "—"
 
 
-def card_kpi_topo(label: str, valor: str, classe: str = ""):
-    st.markdown(
-        f'<div class="ct-kpi-card">'
-        f'<p class="ct-kpi-label">{label}</p>'
-        f'<p class="ct-kpi-value {classe}">{valor}</p>'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
-
-
 k1, k2, k3, k4 = st.columns(4)
 with k1:
-    card_kpi_topo("Itens Selecionados", ui._formatar(total_selecionado))
+    ui.card_kpi_topo("Itens Selecionados", ui._formatar(total_selecionado))
 with k2:
-    card_kpi_topo("Itens Restantes", ui._formatar(total_restante))
+    ui.card_kpi_topo("Itens Restantes", ui._formatar(total_restante))
 with k3:
-    card_kpi_topo("Operadores Ativos", str(operadores_ativos))
+    ui.card_kpi_topo("Operadores Ativos", str(operadores_ativos))
 with k4:
-    card_kpi_topo("Atingimento Médio da Meta", valor_meta, classe_meta)
+    ui.card_kpi_topo("Atingimento Médio da Meta", valor_meta, classe_meta)
 
 st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
 
