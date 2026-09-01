@@ -105,15 +105,21 @@ SETORES = {
 
 
 def _velocimetro(pct_meta: float) -> go.Figure:
-    """Gauge de 0 a 150% com arco vermelho/amarelo/verde."""
+    """Gauge de 0 a 150% com arco vermelho/amarelo/verde.
+
+    Estilo agulha clássica: a `bar` do Plotly é o ponteiro — fina
+    (thickness 0.05) e grafite, apontando até o valor, em cima das
+    faixas coloridas do arco. Sem a barra grossa de progresso, as cores
+    e o ponteiro ganham o destaque.
+    """
     fig = go.Figure(go.Indicator(
         mode="gauge+number",
         value=pct_meta,
-        number={"suffix": "%", "font": {"size": 40, "color": "#0b0b0b"}},
+        number={"suffix": "%", "font": {"size": 44, "color": "#0b0b0b"}},
         gauge={
             "axis": {"range": [0, 150], "tickmode": "linear", "tick0": 0,
                      "dtick": 25, "tickfont": {"size": 12}},
-            "bar": {"color": "#37474F", "thickness": 0.16},
+            "bar": {"color": "#263238", "thickness": 0.05},  # agulha grafite
             "bgcolor": "rgba(0,0,0,0)",
             "borderwidth": 0,
             "steps": [
@@ -137,9 +143,10 @@ def _card_operador(linha) -> None:
     nome = ui.nome_operador(linha["operador_id"])
     pct = float(linha["pct_meta"] or 0.0)
     with st.container(border=True):
+        # Nome maior para leitura nítida em TV.
         st.markdown(
-            f'<p style="font-weight:700;font-size:16px;margin:0;">{nome}</p>'
-            f'<p style="color:#898781;font-size:13px;margin:0 0 6px;">'
+            f'<p style="font-weight:700;font-size:1.25rem;margin:0;">{nome}</p>'
+            f'<p style="color:#898781;font-size:0.95rem;margin:0 0 6px;">'
             f'{linha["region_name"]}</p>',
             unsafe_allow_html=True,
         )
@@ -153,12 +160,16 @@ def _card_operador(linha) -> None:
             ui._formatar(linha["produtividade_real"], 0)
             if linha["produtividade_real"] is not None else "—"
         )
+        # Rodapé ampliado: valores em negrito para destaque.
         st.markdown(
-            '<div style="font-size:13px;color:#0b0b0b;line-height:1.6;">'
-            f'<b>Qtd Realizada:</b> {ui._formatar(linha["quantidade"])}'
-            f' &nbsp;·&nbsp; <b>Tempo:</b> {linha["tempo_total"] or "—"}<br>'
-            f'<b>Meta:</b> {meta_txt}'
-            f' &nbsp;·&nbsp; <b>Prod. Real:</b> {prod_txt}/h'
+            '<div style="font-size:1.05rem;color:#0b0b0b;line-height:1.7;">'
+            f'<b>Qtd Realizada:</b> '
+            f'<span style="font-weight:600;">{ui._formatar(linha["quantidade"])}</span>'
+            f' &nbsp;·&nbsp; <b>Tempo:</b> '
+            f'<span style="font-weight:600;">{linha["tempo_total"] or "—"}</span><br>'
+            f'<b>Meta:</b> <span style="font-weight:600;">{meta_txt}</span>'
+            f' &nbsp;·&nbsp; <b>Prod. Real:</b> '
+            f'<span style="font-weight:600;">{prod_txt}/h</span>'
             "</div>",
             unsafe_allow_html=True,
         )
